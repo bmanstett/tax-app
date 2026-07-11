@@ -178,6 +178,7 @@ const App = (() => {
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
     Store.load();
+    Sync.init();
     setTheme(Store.state.settings.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
 
     // save indicator

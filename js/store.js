@@ -64,6 +64,8 @@ const Store = (() => {
       form1099s: [],          // {id, clientId, taxYear, expected, received, amountReceived, notes}
       yearChecklists: {},     // { "2026": { itemKey: true } }
       lockedYears: [],        // [2025]
+      tombstones: [],         // {id, type, at} — deleted records, so deletions sync across devices
+      settingsUpdatedAt: null,// stamped by Sync when settings change, so newest settings win
       auditLog: [],           // {id, at, action, recordType, recordId, recordLabel, changes:[{field,from,to}]}
       settings: defaultSettings(),
       demoDataLoaded: false,
@@ -188,6 +190,9 @@ const Store = (() => {
     if (idx < 0) return false;
     if (lockGuard(list[idx])) return false;
     const [rec] = list.splice(idx, 1);
+    state.tombstones = state.tombstones || [];
+    state.tombstones.push({ id, type, at: U.nowISO() });
+    if (state.tombstones.length > 2000) state.tombstones.splice(0, state.tombstones.length - 2000);
     logAudit("deleted", type, rec, []);
     save();
     return true;
@@ -381,6 +386,14 @@ const Store = (() => {
     return state;
   }
 
+  /** Replace state with a synced/merged snapshot (persists immediately, no audit entry). */
+  function applySynced(next) {
+    state = migrate(next);
+    localStorage.setItem(LS_KEY, JSON.stringify(state));
+    saveListeners.forEach(fn => fn(new Date()));
+    return state;
+  }
+
   function resetAll() {
     state = defaultState();
     localStorage.setItem(LS_KEY, JSON.stringify(state));
@@ -441,6 +454,14 @@ const Store = (() => {
       },
       importAll: async recs => { for (const r of recs) await tx("readwrite", s => s.put(r)); },
       clearAll: () => tx("readwrite", s => s.clear()),
+      listIds: async () => {
+        const db = await open();
+        return new Promise((resolve, reject) => {
+          const req = db.transaction(STORE).objectStore(STORE).getAllKeys();
+          req.onsuccess = () => resolve(req.result || []);
+          req.onerror = () => reject(req.error);
+        });
+      },
       /** Resize an image File to ≤1400px and return a dataURL (PDFs pass through). */
       fileToDataUrl: file => new Promise((resolve, reject) => {
         if (!/^image\//.test(file.type)) {
@@ -478,7 +499,7 @@ const Store = (() => {
     mileageRate, tripDeduction, expenseDeductibleAmt,
     yearData, taxSummary,
     findDuplicates, integrityCheck,
-    exportJSON, importJSON, validateImport, resetAll,
+    exportJSON, importJSON, validateImport, resetAll, applySynced,
     isYearLocked, backupDue, markBackedUp,
     logAudit, labelFor,
     Attachments,
