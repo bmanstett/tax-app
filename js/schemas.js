@@ -256,7 +256,27 @@ SCHEMA.fields.invoice = [
   F("flatFee", "Flat Fee", "money", { showIf: r => r.feeType !== "Hourly" }),
   F("hours", "Hours", "number", { step: 0.25, showIf: r => r.feeType === "Hourly" }),
   F("rate", "Hourly Rate", "money", { showIf: r => r.feeType === "Hourly" }),
-  F("mileageReimb", "Mileage Reimbursement", "money"),
+  F("mileageReimb", "Mileage Reimbursement", "money", {
+    actionBtn: {
+      label: "📍 Calculate from work order route",
+      showIf: v => !!v.workOrderId,
+      async onClick({ values, btn, setValue, hint }) {
+        const w = Store.get("workOrder", values.workOrderId);
+        if (!w) { UI.toast("Link a work order first", "error"); return; }
+        btn.disabled = true; btn.textContent = "Calculating…";
+        try {
+          if (w.mileageReimbType === "Flat fee") {
+            setValue("mileageReimb", Number(w.mileageFlatFee) || 0);
+            hint(`Flat mileage fee from ${w.woNumber || "work order"}`);
+          } else {
+            const res = await WO.calcRouteMileageReimb(w);
+            setValue("mileageReimb", res.amount);
+            hint(`${U.num(res.miles, 1)} mi round trip × $${res.rate.toFixed(2)}/mi = ${U.money(res.amount)} — edit if you made extra stops`);
+          }
+        } catch (e) { UI.toast(e.message, "error", 6000); }
+        finally { btn.disabled = false; btn.textContent = "📍 Calculate from work order route"; }
+      },
+    } }),
   F("expenseReimb", "Expense Reimbursement", "money"),
   F("otherCharges", "Other Charges", "money"),
 

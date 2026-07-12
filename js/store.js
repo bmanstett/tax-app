@@ -408,6 +408,11 @@ const Store = (() => {
   }
   function markBackedUp() { state.settings.lastBackupAt = U.nowISO(); save(); }
 
+  /** Stamp settings as edited on this device *now*, then persist. Multi-device
+      sync compares settingsUpdatedAt to decide whose profile wins, so this
+      guarantees a fresh local edit is never overwritten by an older remote copy. */
+  function markSettingsChanged() { state.settingsUpdatedAt = U.nowISO(); save(); }
+
   /* ---------- IndexedDB attachments (receipt images/PDFs) ---------- */
   const Attachments = (() => {
     const DB = "anstett_attachments", STORE = "files";
@@ -500,7 +505,7 @@ const Store = (() => {
     yearData, taxSummary,
     findDuplicates, integrityCheck,
     exportJSON, importJSON, validateImport, resetAll, applySynced,
-    isYearLocked, backupDue, markBackedUp,
+    isYearLocked, backupDue, markBackedUp, markSettingsChanged,
     logAudit, labelFor,
     Attachments,
   };

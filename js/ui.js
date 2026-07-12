@@ -153,9 +153,9 @@ const UI = (() => {
           if (input.type === "checkbox") values[key] = input.checked;
           else if (input.type === "file") { pendingFile = input.files[0] || null; showFilePreview(input, pendingFile); return; }
           else values[key] = input.value;
-          if (f && (f.type === "checkbox" || f.type === "select" || f.type === "client")) {
-            // re-render if any field's visibility depends on values
-            if (fields.some(x => x.showIf)) { snapshotAndRerender(); }
+          if (f && (f.type === "checkbox" || f.type === "select" || f.type === "client" || f.type === "workorder")) {
+            // re-render if any field (or action button) visibility depends on values
+            if (fields.some(x => x.showIf || (x.actionBtn && x.actionBtn.showIf))) { snapshotAndRerender(); }
           }
         });
       });
@@ -336,7 +336,7 @@ const UI = (() => {
     const req = f.required ? '<span class="req"> *</span>' : "";
     const hint = f.hint ? `<div class="hint">${U.escapeHtml(f.hint)}</div>` : "";
     const label = `<label for="fld-${f.key}">${U.escapeHtml(f.label)}${req}</label>`;
-    const actionBtn = f.actionBtn ? `<button type="button" class="btn btn-sm" data-field-action="${f.key}" style="margin-top:6px">${U.escapeHtml(f.actionBtn.label)}</button>` : "";
+    const actionBtn = (f.actionBtn && (!f.actionBtn.showIf || f.actionBtn.showIf(values))) ? `<button type="button" class="btn btn-sm" data-field-action="${f.key}" style="margin-top:6px">${U.escapeHtml(f.actionBtn.label)}</button>` : "";
     const wrap = inner => `<div class="field ${span}" data-field-wrap="${f.key}">${label}${inner}${actionBtn}${hint}</div>`;
     const esc = U.escapeHtml;
 

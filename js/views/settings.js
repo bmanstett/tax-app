@@ -188,7 +188,7 @@ Views.settings = {
         defaultHourlyRate: Number(g("#st-rate").value) || 0,
         defaultPaymentTerms: g("#st-terms").value,
       });
-      Store.save(); UI.toast("Profile saved", "success"); App.refreshNav();
+      Store.markSettingsChanged(); UI.toast("Profile saved", "success"); App.refreshNav();
     });
 
     g("#st-save-tax").addEventListener("click", () => {
@@ -208,7 +208,7 @@ Views.settings = {
         mileageRates: Object.keys(newRates).length ? newRates : s.mileageRates,
       });
       Store.logAudit("updated", "settings", { id: "assumptions" }, [{ field: "taxAssumptions", from: "", to: "updated" }]);
-      Store.save(); UI.toast("Tax assumptions saved", "success"); App.rerender();
+      Store.markSettingsChanged(); UI.toast("Tax assumptions saved", "success"); App.rerender();
     });
 
     g("#st-add-rate").addEventListener("click", () => {

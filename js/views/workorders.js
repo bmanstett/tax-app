@@ -135,18 +135,46 @@ const WO = (() => {
     UI.toast("Duplicated — set the new WO # and dates");
   }
 
+  /** Per-mile reimbursement rate for a job: a "$0.70/mi"-style rate parsed from
+      the work order's mileage note, else the configured IRS/agreed rate. */
+  function mileageBillRate(w) {
+    const m = String(w.mileageAmount || "").match(/\$?\s*(\d+(?:\.\d+)?)\s*(?:\/|per)\s*mi/i);
+    if (m) { const r = Number(m[1]); if (r > 0 && r < 10) return r; }
+    return Store.mileageRate(U.yearOf(w.dateAssigned || U.todayISO()));
+  }
+
+  function routeStart() {
+    const s = Store.state.settings;
+    return (s.homeBase && /\d/.test(s.homeBase)) ? s.homeBase : (s.businessAddress || s.homeBase || "").replace(/\n/g, ", ").trim();
+  }
+
+  /** Auto-calculate a mileage reimbursement from the office → loss-location round trip. */
+  async function calcRouteMileageReimb(w) {
+    const from = routeStart();
+    if (!from) throw new Error("Set your office address in Settings → Home base first");
+    const to = (w.lossLocation || "").split("\n").map(s => s.trim()).filter(Boolean).join(", ");
+    if (!to) throw new Error("This work order has no loss-location address to route to");
+    const oneWay = await U.drivingMiles(from, to);
+    const miles = U.round2(oneWay * 2);
+    const rate = mileageBillRate(w);
+    return { oneWay: U.round2(oneWay), miles, rate, amount: U.round2(miles * rate) };
+  }
+
   function createInvoiceFrom(w, detailModal) {
     const client = Store.get("client", w.clientId);
     const L = linked(w);
-    const miReimb = w.mileageReimbType === "Flat fee" && Number(w.mileageFlatFee)
-      ? Number(w.mileageFlatFee)
-      : U.round2(U.sum(L.mileage.filter(m => m.reimbursable && !m.reimbursed), m => Store.tripDeduction(m) + (Number(m.parking) || 0) + (Number(m.tolls) || 0)));
+    const billableTrips = L.mileage.filter(m => m.reimbursable && !m.reimbursed);
+    const loggedMi = U.round2(U.sum(billableTrips, m => Store.tripDeduction(m) + (Number(m.parking) || 0) + (Number(m.tolls) || 0)));
+    const flatMi = w.mileageReimbType === "Flat fee" ? (Number(w.mileageFlatFee) || 0) : 0;
+    const miReimb = flatMi || loggedMi;
+    // when mileage is billable per-mile but no trips are logged, calculate from the route
+    const autoCalc = w.mileageAllowed && w.mileageReimbType !== "Flat fee" && !billableTrips.length && !!(w.lossLocation || "").trim();
     const exReimb = U.round2(U.sum(L.expenses.filter(e => e.reimbursable && !e.reimbursed), e => e.amount));
     const nextNum = `INV-${App.viewYear()}-${String(Store.all("invoice").length + 1).padStart(3, "0")}`;
     const terms = (client && client.paymentTerms) || Store.state.settings.defaultPaymentTerms || "Net 30";
     const days = { "Due on Receipt": 0, "Net 15": 15, "Net 30": 30, "Net 45": 45, "Net 60": 60 }[terms] ?? 30;
     const due = new Date(); due.setDate(due.getDate() + days);
-    UI.openForm("invoice", null, {
+    const m = UI.openForm("invoice", null, {
       presets: {
         invoiceNumber: nextNum, clientId: w.clientId, workOrderId: w.id,
         invoiceDate: U.todayISO(), dueDate: due.toISOString().slice(0, 10),
@@ -169,6 +197,22 @@ const WO = (() => {
         App.go("invoices");
       },
     });
+    // fill the mileage line from the route once the form is open (non-blocking)
+    if (autoCalc && m && m.body) {
+      const field = m.body.querySelector('[data-key="mileageReimb"]');
+      if (field) {
+        field.disabled = true;
+        UI.toast("Calculating mileage from the route…");
+        calcRouteMileageReimb(w).then(res => {
+          field.value = res.amount; field.disabled = false;
+          UI.toast(`Mileage: ${U.num(res.miles, 1)} mi × $${res.rate.toFixed(2)}/mi = ${U.money(res.amount)} — edit if needed`, "success", 5000);
+        }).catch(e => {
+          field.disabled = false;
+          UI.toast(`Mileage not auto-calculated (${e.message}). Use 📍 Calculate on the field.`, "error", 6000);
+        });
+      }
+    }
+    return m;
   }
 
   function exportSummary(w) {
@@ -361,7 +405,7 @@ const WO = (() => {
     });
   }
 
-  return { openEditor, openDetail, duplicate, createInvoiceFrom, warnings, jobFinancials, feeText, linked, changeStatus, openStatusSheet, expectedFee, isPendingInvoice, billingState };
+  return { openEditor, openDetail, duplicate, createInvoiceFrom, warnings, jobFinancials, feeText, linked, changeStatus, openStatusSheet, expectedFee, isPendingInvoice, billingState, calcRouteMileageReimb, mileageBillRate };
 })();
 
 Views.workorders = {
