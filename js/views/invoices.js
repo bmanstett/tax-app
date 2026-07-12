@@ -34,10 +34,13 @@ const Invoices = (() => {
         if (tot > 0 && paid >= tot - 0.005 && vals.status !== "Written Off") vals.status = "Paid";
         const saved = rec ? Store.update("invoice", rec.id, vals) : Store.add("invoice", vals);
         if (saved) syncWorkOrder(saved);
-        // reconcile: if just marked paid, offer to log income
+        // reconcile: if just marked paid, offer to log income (incl. any bonus)
         if (saved && saved.status === "Paid" && paid > 0) {
-          const already = Store.state.income.some(i => i.invoiceId === saved.id);
+          const already = Store.state.income.some(i => i.invoiceId === saved.id && i.category !== BONUS_CATEGORY);
           if (!already) offerIncome(saved);
+          else offerBonusIncome(saved); // bonus added after the payment was already logged
+        } else if (saved) {
+          offerBonusIncome(saved);
         }
         UI.toast(rec ? "Invoice updated" : "Invoice added", "success");
         App.rerender();
@@ -46,9 +49,13 @@ const Invoices = (() => {
     });
   }
 
+  const BONUS_CATEGORY = "Bonus / Incentive Income";
+  const bonusIncomeExists = inv => Store.state.income.some(i => i.invoiceId === inv.id && i.category === BONUS_CATEGORY);
+
   async function offerIncome(inv) {
+    const bonus = Number(inv.bonusAmount) || 0;
     const ok = await UI.confirm("Log income for this payment?",
-      `Invoice <strong>${U.escapeHtml(inv.invoiceNumber)}</strong> is paid (${U.money(inv.amountPaid)}). Record a matching income entry so your books reconcile?`,
+      `Invoice <strong>${U.escapeHtml(inv.invoiceNumber)}</strong> is paid (${U.money(inv.amountPaid)})${bonus ? ` plus a <strong>${U.money(bonus)} bonus</strong>` : ""}. Record matching income entr${bonus ? "ies" : "y"} so your books reconcile?`,
       { confirmLabel: "Log income" });
     if (ok) {
       Store.add("income", {
@@ -56,9 +63,51 @@ const Invoices = (() => {
         paymentMethod: inv.paymentMethod || "", invoiceId: inv.id, workOrderId: inv.workOrderId || "",
         category: "Service Income (Invoiced)", is1099: true, notes: `Payment of ${inv.invoiceNumber}`,
       });
-      UI.toast("Income entry created", "success");
+      if (bonus > 0 && !bonusIncomeExists(inv)) {
+        Store.add("income", {
+          date: inv.paymentDate || U.todayISO(), clientId: inv.clientId, amount: bonus,
+          paymentMethod: inv.paymentMethod || "", invoiceId: inv.id, workOrderId: inv.workOrderId || "",
+          category: BONUS_CATEGORY, is1099: true, notes: `Bonus on ${inv.invoiceNumber}`,
+        });
+      }
+      UI.toast(bonus ? "Income + bonus entries created" : "Income entry created", "success");
       App.rerender();
     }
+  }
+
+  /** Bonus recorded on the invoice but not yet in income (e.g. added while editing later). */
+  async function offerBonusIncome(inv) {
+    const bonus = Number(inv.bonusAmount) || 0;
+    if (bonus <= 0 || bonusIncomeExists(inv)) return;
+    const ok = await UI.confirm("Log the bonus as income?",
+      `Invoice <strong>${U.escapeHtml(inv.invoiceNumber)}</strong> has a <strong>${U.money(bonus)}</strong> bonus recorded. Add a matching “${BONUS_CATEGORY}” entry so it counts in YTD income and job profit?`,
+      { confirmLabel: "Log bonus income" });
+    if (ok) {
+      Store.add("income", {
+        date: inv.paymentDate || U.todayISO(), clientId: inv.clientId, amount: bonus,
+        paymentMethod: inv.paymentMethod || "", invoiceId: inv.id, workOrderId: inv.workOrderId || "",
+        category: BONUS_CATEGORY, is1099: true, notes: `Bonus on ${inv.invoiceNumber}`,
+      });
+      UI.toast("Bonus income logged", "success");
+      App.rerender();
+    }
+  }
+
+  /** Derived, no-manual-work verification of an invoice against logged income. */
+  function verifiedBadge(inv) {
+    const linked = Store.state.income.filter(r => r.invoiceId === inv.id);
+    const nonBonus = U.sum(linked.filter(r => r.category !== BONUS_CATEGORY), r => r.amount);
+    const bonus = Number(inv.bonusAmount) || 0;
+    const bonusLogged = linked.some(r => r.category === BONUS_CATEGORY);
+    if (inv.status === "Paid") {
+      if (nonBonus >= Store.invoiceTotal(inv) - 0.005 && (!bonus || bonusLogged)) return UI.badge("✓ Paid · income logged", "green");
+      if (bonus && !bonusLogged) return UI.badge("⚠ Bonus not in income", "amber");
+      return UI.badge("⚠ Paid — income missing", "amber");
+    }
+    if (Store.invoiceIsOverdue(inv)) return UI.badge("Overdue", "red");
+    if (["Sent", "Partial"].includes(inv.status)) return UI.badge("Awaiting payment", "blue");
+    if (inv.status === "Written Off") return UI.badge("Written off", "slate");
+    return UI.badge("Draft", "slate");
   }
 
   function markStatus(inv, status) {
@@ -174,6 +223,8 @@ const Invoices = (() => {
           ["Expense reimb.", inv.expenseReimb ? U.money(inv.expenseReimb) : "—"],
           ["Total", `<strong>${U.money(total)}</strong>`],
           ["Paid", U.money(inv.amountPaid || 0) + (inv.paymentDate ? ` on ${U.fmtDate(inv.paymentDate)}` : "")],
+          inv.bonusAmount ? ["Bonus (not billed)", `<strong style="color:var(--green)">${U.money(inv.bonusAmount)}</strong> ${bonusIncomeExists(inv) ? "· ✓ in income" : "· " + UI.badge("not in income yet", "amber")}`] : null,
+          ["Verified", verifiedBadge(inv)],
           ["Balance", `<strong style="color:${bal > 0.005 ? "var(--amber)" : "var(--green)"}">${U.money(bal)}</strong>`],
           ["Payment method", U.escapeHtml(inv.paymentMethod || "")],
           ["Income reconciled", incomeLinked.length ? `✓ ${incomeLinked.length} entr${incomeLinked.length > 1 ? "ies" : "y"} (${U.money(U.sum(incomeLinked, i => i.amount))})` : UI.badge("No income entry linked", "amber")],
@@ -197,7 +248,7 @@ const Invoices = (() => {
     });
   }
 
-  return { openEditor, openDetail, preview, markStatus, agingBucket, syncWorkOrder };
+  return { openEditor, openDetail, preview, markStatus, agingBucket, syncWorkOrder, verifiedBadge, offerBonusIncome };
 })();
 
 Views.invoices = {
@@ -217,7 +268,7 @@ Views.invoices = {
       <div class="stat-grid" style="grid-template-columns:repeat(auto-fill,minmax(170px,1fr))">
         ${UI.statCard({ label: "Outstanding", value: U.money(U.sum(open, Store.invoiceBalance)), sub: `${open.length} invoice(s)`, color: "blue" })}
         ${UI.statCard({ label: "Overdue", value: U.money(U.sum(overdue, Store.invoiceBalance)), sub: `${overdue.length} invoice(s)`, color: overdue.length ? "red" : "green" })}
-        ${UI.statCard({ label: `Collected ${yr}`, value: U.money(U.sum(paidThisYear, i => Number(i.amountPaid) || 0)), color: "green" })}
+        ${UI.statCard({ label: `Collected ${yr}`, value: U.money(U.sum(paidThisYear, i => (Number(i.amountPaid) || 0) + (Number(i.bonusAmount) || 0))), sub: U.sum(paidThisYear, i => Number(i.bonusAmount) || 0) ? `incl. ${U.money(U.sum(paidThisYear, i => Number(i.bonusAmount) || 0))} bonuses` : "", color: "green" })}
         ${UI.statCard({ label: "Paid w/o income entry", value: String(noIncomeLink.length), sub: noIncomeLink.length ? "reconcile these" : "all reconciled", color: noIncomeLink.length ? "amber" : "green" })}
       </div>
       <div class="card">
@@ -238,12 +289,13 @@ Views.invoices = {
       ],
       columns: [
         { label: "Invoice #", value: i => i.invoiceNumber },
+        { label: "WO # / P #", value: i => Store.woLabel(i.workOrderId) || "—", sortVal: i => Store.woLabel(i.workOrderId) || "" },
         { label: "Status", html: i => UI.statusBadge(SCHEMA.invoiceStatuses, Store.invoiceIsOverdue(i) ? "Overdue" : i.status), sortVal: i => i.status },
         { label: "Client", value: i => Store.clientName(i.clientId) },
         { label: "Date", value: i => U.fmtDate(i.invoiceDate), sortVal: i => i.invoiceDate || "" },
-        { label: "Due", html: i => { if (!i.dueDate) return "—"; const late = Store.invoiceIsOverdue(i); return `<span style="color:${late ? "var(--red)" : "inherit"};font-weight:${late ? 700 : 400}">${U.fmtDate(i.dueDate)}</span>`; }, sortVal: i => i.dueDate || "" },
-        { label: "Total", html: i => U.money(Store.invoiceTotal(i)), sortVal: i => Store.invoiceTotal(i), num: true },
+        { label: "Total", html: i => U.money(Store.invoiceTotal(i)) + (Number(i.bonusAmount) ? ` <span style="color:var(--green);font-size:11px">+${U.money(i.bonusAmount)} bonus</span>` : ""), sortVal: i => Store.invoiceTotal(i), num: true },
         { label: "Balance", html: i => { const b = Store.invoiceBalance(i); return b > 0.005 ? `<strong>${U.money(b)}</strong>` : "—"; }, sortVal: i => Store.invoiceBalance(i), num: true },
+        { label: "Verified", html: i => Invoices.verifiedBadge(i), sortVal: i => i.status === "Paid" ? 0 : 1 },
       ],
       defaultSort: { col: 3, dir: -1 },
       rowClass: i => Store.invoiceIsOverdue(i) ? "row-warn" : "",
@@ -253,9 +305,10 @@ Views.invoices = {
           <div class="record-card-title">${U.escapeHtml(i.invoiceNumber)}</div>
           <div class="record-card-amount">${U.money(Store.invoiceTotal(i))}</div>
         </div>
-        <div class="record-card-sub">${U.escapeHtml(Store.clientName(i.clientId))} · ${U.fmtDate(i.invoiceDate)}</div>
+        <div class="record-card-sub">${U.escapeHtml(Store.woLabel(i.workOrderId) || "no WO")} · ${U.escapeHtml(Store.clientName(i.clientId))} · ${U.fmtDate(i.invoiceDate)}</div>
         <div class="record-card-meta">
-          ${UI.statusBadge(SCHEMA.invoiceStatuses, Store.invoiceIsOverdue(i) ? "Overdue" : i.status)}
+          ${Invoices.verifiedBadge(i)}
+          ${Number(i.bonusAmount) ? UI.badge(`+${U.money(i.bonusAmount)} bonus`, "green") : ""}
           ${Store.invoiceBalance(i) > 0.005 ? UI.badge(`${U.money(Store.invoiceBalance(i))} due`, "amber") : ""}
         </div>
       </div>`,

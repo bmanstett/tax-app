@@ -64,7 +64,7 @@ SCHEMA.paymentMethods = ["ACH / Direct Deposit", "Check", "Credit Card", "Debit 
 SCHEMA.tripTypes = ["Inspection", "Client Meeting", "Supply Run", "Administrative", "Training", "Other"];
 
 SCHEMA.incomeCategories = ["Service Income (1099)", "Service Income (Invoiced)", "Consulting Income",
-  "Expert Testimony", "Reimbursement Received", "Interest Income", "Other Business Income"];
+  "Expert Testimony", "Bonus / Incentive Income", "Reimbursement Received", "Interest Income", "Other Business Income"];
 
 SCHEMA.paymentTermsOptions = ["Due on Receipt", "Net 15", "Net 30", "Net 45", "Net 60"];
 
@@ -261,7 +261,9 @@ SCHEMA.fields.invoice = [
   F("otherCharges", "Other Charges", "money"),
 
   F("_s3", "Payment", "section"),
-  F("amountPaid", "Amount Paid", "money"),
+  F("amountPaid", "Amount Paid (invoiced amount)", "money"),
+  F("bonusAmount", "Bonus / Incentive Received", "money", { span2: false,
+    hint: "Extra $ the client added on top of the invoice (not billed). Tracked as income against the work order; never shown on the printed invoice." }),
   F("paymentDate", "Payment Date", "date"),
   F("paymentMethod", "Payment Method", "select", { options: SCHEMA.paymentMethods, allowEmpty: true }),
 

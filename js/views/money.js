@@ -16,10 +16,11 @@ const Income = (() => {
     if (!invoiceId) return;
     const inv = Store.get("invoice", invoiceId);
     if (!inv || ["Paid", "Written Off"].includes(inv.status)) return;
-    const paidSum = U.round2(U.sum(Store.state.income.filter(i => i.invoiceId === invoiceId), i => i.amount));
+    // bonus entries don't count toward the invoiced amount
+    const paidSum = U.round2(U.sum(Store.state.income.filter(i => i.invoiceId === invoiceId && i.category !== "Bonus / Incentive Income"), i => i.amount));
     if (paidSum <= 0.005) return;
     const total = Store.invoiceTotal(inv);
-    const patch = { amountPaid: paidSum };
+    const patch = { amountPaid: Math.min(paidSum, total) };
     if (paidSum >= total - 0.005) {
       patch.status = "Paid";
       patch.paymentDate = inv.paymentDate || incomeVals.date || U.todayISO();

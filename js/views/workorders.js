@@ -20,9 +20,23 @@ const WO = (() => {
     };
   }
 
+  /** Billing stage derived purely from linked records — no manual updating. */
+  function billingState(w) {
+    const L = linked(w);
+    if (L.invoices.some(i => i.status === "Paid")) return { label: "Paid ✓", color: "green", rank: 2 };
+    if (L.invoices.length) return { label: "Invoiced ✓", color: "blue", rank: 1 };
+    if (L.income.length) return { label: "Income logged", color: "green", rank: 2 };
+    return { label: "Not invoiced", color: "slate", rank: 0 };
+  }
+
   function warnings(w) {
     const L = linked(w);
     const out = [];
+    // status vs. reality checks (catches manual status changes that don't match the records)
+    if (["Invoiced", "Paid", "Closed"].includes(w.status) && !L.invoices.length && !L.income.length)
+      out.push({ text: `Marked ${w.status} — no invoice or income linked`, color: "amber" });
+    if (["Paid", "Closed"].includes(w.status) && L.invoices.length && !L.invoices.some(i => i.status === "Paid") && !L.income.length)
+      out.push({ text: `Marked ${w.status} — invoice not paid`, color: "amber" });
     if (SCHEMA.woOpenStatuses.includes(w.status) && w.reportDueDate) {
       const dd = U.daysFromToday(w.reportDueDate);
       if (dd < 0) out.push({ text: `Report overdue by ${-dd}d`, color: "red" });
@@ -347,7 +361,7 @@ const WO = (() => {
     });
   }
 
-  return { openEditor, openDetail, duplicate, createInvoiceFrom, warnings, jobFinancials, feeText, linked, changeStatus, openStatusSheet, expectedFee, isPendingInvoice };
+  return { openEditor, openDetail, duplicate, createInvoiceFrom, warnings, jobFinancials, feeText, linked, changeStatus, openStatusSheet, expectedFee, isPendingInvoice, billingState };
 })();
 
 Views.workorders = {
@@ -392,6 +406,7 @@ Views.workorders = {
       columns: [
         { label: "WO #", value: w => w.woNumber || "—", sortVal: w => w.woNumber || "" },
         { label: "Status", html: w => `<span class="status-tap" data-lv-stop data-wo-status="${w.id}" title="Tap to change status">${UI.statusBadge(SCHEMA.workOrderStatuses, w.status)}<span class="status-caret">▾</span></span>`, sortVal: w => SCHEMA.workOrderStatuses.findIndex(s => s.value === w.status) },
+        { label: "Billing", html: w => { const b = WO.billingState(w); return UI.badge(b.label, b.color); }, sortVal: w => WO.billingState(w).rank },
         { label: "Client", value: w => Store.clientName(w.clientId) || "—" },
         { label: "Claim #", value: w => w.claimNumber || "—" },
         { label: "Type", html: w => w.jobType ? UI.badge(w.jobType, "slate") : "—", sortVal: w => w.jobType || "" },
@@ -420,6 +435,7 @@ Views.workorders = {
           <div class="record-card-meta">
             ${w.reportDueDate ? UI.badge(`Due ${U.fmtDateShort(w.reportDueDate)}`, SCHEMA.woOpenStatuses.includes(w.status) && U.daysFromToday(w.reportDueDate) < 0 ? "red" : "slate") : ""}
             ${UI.badge(WO.feeText(w), "blue")}
+            ${(() => { const b = WO.billingState(w); return b.rank ? UI.badge(b.label, b.color) : ""; })()}
             ${warns.map(x => UI.badge(x.text, x.color)).join("")}
           </div>
         </div>`;

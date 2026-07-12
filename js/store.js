@@ -330,8 +330,8 @@ const Store = (() => {
         issues.push(`Mileage trip on ${U.fmtDate(m.date)}: odometer end is before start.`);
     }
     for (const i of state.invoices) {
-      if ((Number(i.amountPaid) || 0) - invoiceTotal(i) > 0.01)
-        issues.push(`Invoice ${i.invoiceNumber}: amount paid exceeds invoice total.`);
+      if ((Number(i.amountPaid) || 0) - invoiceTotal(i) - (Number(i.bonusAmount) || 0) > 0.01)
+        issues.push(`Invoice ${i.invoiceNumber}: amount paid exceeds invoice total${i.bonusAmount ? " plus bonus" : ""} — if the extra is a bonus, record it in the invoice's Bonus field.`);
       if (i.status === "Paid" && (!i.paymentDate || !i.paymentMethod))
         issues.push(`Invoice ${i.invoiceNumber} is marked Paid but is missing payment date or method.`);
     }

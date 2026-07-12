@@ -271,7 +271,7 @@ const Sync = (() => {
     }
   }
 
-  function scheduleSync(ms = 4000) {
+  function scheduleSync(ms = 1500) {
     if (!cfg.enabled) return;
     clearTimeout(scheduleTimer);
     scheduleTimer = setTimeout(() => sync(), ms);
@@ -312,13 +312,15 @@ const Sync = (() => {
     setStatus(cfg.enabled ? "ok" : "off");
     // wire triggers unconditionally — scheduleSync() is a no-op while disabled,
     // so enabling later in Settings starts syncing without a reload
-    Store.onSave(() => { if (!applying) scheduleSync(); });
-    window.addEventListener("online", () => scheduleSync(2000));
+    Store.onSave(() => { if (!applying) scheduleSync(1500); });
+    window.addEventListener("online", () => scheduleSync(1000));
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible" &&
-          (!cfg.lastSyncAt || Date.now() - new Date(cfg.lastSyncAt).getTime() > 60000)) scheduleSync(1200);
+          (!cfg.lastSyncAt || Date.now() - new Date(cfg.lastSyncAt).getTime() > 15000)) scheduleSync(300);
+      // push pending work the moment the app is backgrounded (best effort)
+      if (document.visibilityState === "hidden") { clearTimeout(scheduleTimer); sync(); }
     });
-    setInterval(() => scheduleSync(0), 4 * 60 * 1000);
+    setInterval(() => scheduleSync(0), 60 * 1000);
     const mob = document.getElementById("sync-mobile");
     if (mob) mob.addEventListener("click", () => sync({ manual: true }));
     if (cfg.enabled) scheduleSync(800);
