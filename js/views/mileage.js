@@ -34,7 +34,9 @@ const Mileage = (() => {
           <select id="qt-wo"><option value="">— none —</option>
           ${wos.map(w => `<option value="${w.id}">${U.escapeHtml((w.woNumber || "WO") + " — " + U.truncate(w.lossLocation || Store.clientName(w.clientId), 34))}</option>`).join("")}</select></div>
         <div class="field"><label>Destination <span class="req">*</span></label><input type="text" id="qt-dest" placeholder="loss location address"></div>
-        <div class="field"><label>Miles (total) <span class="req">*</span></label><input type="number" id="qt-miles" inputmode="decimal" step="0.1" placeholder="e.g. 58"></div>
+        <div class="field"><label>Miles (total) <span class="req">*</span></label><input type="number" id="qt-miles" inputmode="decimal" step="0.1" placeholder="e.g. 58">
+          <button type="button" class="btn btn-sm" id="qt-calc" style="margin-top:6px">📍 Calculate office → destination</button>
+          <div class="hint" id="qt-calc-hint"></div></div>
         <div class="field"><label>Purpose</label><input type="text" id="qt-purpose" placeholder="e.g. roof inspection — claim #"></div>
         <div class="checkbox-field"><input type="checkbox" id="qt-round" checked><label for="qt-round">Round trip</label></div>`,
       footer: `<button class="btn" id="qt-cancel">Cancel</button><button class="btn btn-primary" id="qt-save">Log trip</button>`,
@@ -46,6 +48,23 @@ const Mileage = (() => {
         m.body.querySelector("#qt-dest").value = (w.lossLocation || "").split("\n")[0];
         m.body.querySelector("#qt-purpose").value = `${w.jobType || "Site"} inspection — ${w.woNumber || ""} ${w.claimNumber ? "claim " + w.claimNumber : ""}`.trim();
       }
+    });
+    const calcBtn = m.body.querySelector("#qt-calc");
+    calcBtn.addEventListener("click", async () => {
+      const s = Store.state.settings;
+      const from = (s.homeBase && /\d/.test(s.homeBase)) ? s.homeBase : (s.businessAddress || s.homeBase || "").replace(/\n/g, ", ");
+      const to = m.body.querySelector("#qt-dest").value.trim();
+      if (!from) { UI.toast("Set your office address in Settings → Home base first", "error", 5000); return; }
+      if (!to) { UI.toast("Enter the destination first", "error"); return; }
+      calcBtn.disabled = true; calcBtn.textContent = "Calculating…";
+      try {
+        const oneWay = await U.drivingMiles(from, to);
+        const round = m.body.querySelector("#qt-round").checked;
+        const total = U.round2(round ? oneWay * 2 : oneWay);
+        m.body.querySelector("#qt-miles").value = total;
+        m.body.querySelector("#qt-calc-hint").textContent = `${U.num(oneWay, 1)} mi one-way${round ? " × 2" : ""} = ${U.num(total, 1)} mi — edit if you made extra stops`;
+      } catch (e) { UI.toast(e.message, "error", 6000); }
+      finally { calcBtn.disabled = false; calcBtn.textContent = "📍 Calculate office → destination"; }
     });
     m.footerEl.querySelector("#qt-cancel").addEventListener("click", () => m.close());
     m.footerEl.querySelector("#qt-save").addEventListener("click", () => {

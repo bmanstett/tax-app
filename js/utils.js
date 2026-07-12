@@ -155,6 +155,26 @@ const U = {
   /** Deep clone via JSON (fine for our plain-data records) */
   clone(o) { return JSON.parse(JSON.stringify(o)); },
 
+  /** One-way driving distance in miles between two addresses.
+      Free OpenStreetMap services (Nominatim geocoding + OSRM routing) — no API key. */
+  async drivingMiles(from, to) {
+    const geocode = async q => {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`);
+      if (!res.ok) throw new Error(`Address lookup failed (${res.status}) — try again in a moment`);
+      const js = await res.json();
+      if (!js.length) throw new Error(`Couldn't find "${U.truncate(q, 38)}" — use a fuller street address`);
+      return `${js[0].lon},${js[0].lat}`;
+    };
+    const a = await geocode(from);
+    await new Promise(r => setTimeout(r, 1100)); // Nominatim fair use: 1 request/second
+    const b = await geocode(to);
+    const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${a};${b}?overview=false`);
+    if (!res.ok) throw new Error(`Routing failed (${res.status}) — try again in a moment`);
+    const js = await res.json();
+    if (js.code !== "Ok" || !js.routes || !js.routes.length) throw new Error("No driving route found between those addresses");
+    return js.routes[0].distance / 1609.344;
+  },
+
   /** Shallow diff for the audit log: returns [{field, from, to}] */
   diff(before, after, skip = ["updatedAt", "editHistory"]) {
     const out = [];
