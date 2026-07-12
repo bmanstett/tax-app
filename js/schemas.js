@@ -333,7 +333,13 @@ SCHEMA.fields.mileage = [
   F("_s1", "Trip", "section"),
   F("date", "Date", "date", { default: () => U.todayISO(), required: true }),
   F("tripType", "Trip Type", "select", { options: SCHEMA.tripTypes, default: "Inspection" }),
-  F("startLocation", "Start Location", "text", { defaultFromSettings: "homeBase", placeholder: "e.g. Home office" }),
+  F("startLocation", "Start Location", "text", { placeholder: "office / home base address",
+    hint: "Defaults to your office — set it under Settings → Home base (use a full street address so miles can auto-calculate)",
+    default: () => {
+      const s = Store.state.settings;
+      if (s.homeBase && /\d/.test(s.homeBase)) return s.homeBase; // looks like a real address
+      return (s.businessAddress || s.homeBase || "").replace(/\n/g, ", ");
+    } }),
   F("destination", "Destination", "text", { required: false, placeholder: "loss location / client address" }),
   F("businessPurpose", "Business Purpose", "text", { placeholder: "e.g. Roof inspection for claim #…", span2: true }),
   F("clientId", "Client", "client"),
@@ -341,7 +347,27 @@ SCHEMA.fields.mileage = [
 
   F("_s2", "Distance", "section"),
   F("roundTrip", "Round trip", "checkbox", { default: true }),
-  F("miles", "Miles Driven (total)", "number", { required: true, step: 0.1 }),
+  F("miles", "Miles Driven (total)", "number", { required: true, step: 0.1,
+    actionBtn: {
+      label: "📍 Calculate from addresses",
+      async onClick({ values, btn, setValue, hint }) {
+        const from = String(values.startLocation || "").trim();
+        const to = String(values.destination || "").trim();
+        if (!from || !to) { UI.toast("Fill in Start Location and Destination first", "error"); return; }
+        btn.disabled = true; btn.textContent = "Calculating…";
+        try {
+          const oneWay = await U.drivingMiles(from, to);
+          const total = U.round2(values.roundTrip ? oneWay * 2 : oneWay);
+          setValue("miles", total);
+          hint(`${U.num(oneWay, 1)} mi one-way${values.roundTrip ? " × 2 (round trip)" : ""} = ${U.num(total, 1)} mi — edit the number if you made extra stops`);
+          UI.toast(`Calculated ${U.num(total, 1)} miles`, "success");
+        } catch (e) {
+          UI.toast(e.message, "error", 6000);
+        } finally {
+          btn.disabled = false; btn.textContent = "📍 Calculate from addresses";
+        }
+      },
+    } }),
   F("odometerStart", "Odometer Start", "number"),
   F("odometerEnd", "Odometer End", "number"),
   F("parking", "Parking", "money"),

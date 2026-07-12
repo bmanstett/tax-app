@@ -159,6 +159,33 @@ const UI = (() => {
           }
         });
       });
+      // per-field action buttons (e.g. "Calculate miles" on the mileage form)
+      form.querySelectorAll("[data-field-action]").forEach(btn => {
+        const f = fields.find(x => x.key === btn.getAttribute("data-field-action"));
+        if (!f || !f.actionBtn || !f.actionBtn.onClick) return;
+        btn.addEventListener("click", e => {
+          e.preventDefault();
+          // snapshot current inputs so the handler sees what's typed right now
+          form.querySelectorAll("[data-key]").forEach(input => {
+            const k = input.getAttribute("data-key");
+            if (input.type === "checkbox") values[k] = input.checked;
+            else if (input.type !== "file") values[k] = input.value;
+          });
+          f.actionBtn.onClick({
+            values, btn,
+            setValue: (k, v) => {
+              values[k] = v;
+              const inp = form.querySelector(`[data-key="${k}"]`);
+              if (inp && inp.type !== "checkbox" && inp.type !== "file") inp.value = v;
+            },
+            hint: text => {
+              let h = btn.parentElement.querySelector(".action-hint");
+              if (!h) { h = document.createElement("div"); h.className = "hint action-hint"; btn.insertAdjacentElement("afterend", h); }
+              h.textContent = text;
+            },
+          });
+        });
+      });
       // file pickers: buttons proxy to the hidden inputs (camera vs. file)
       form.querySelectorAll("[data-file-btn]").forEach(btn => {
         btn.addEventListener("click", e => {
@@ -309,7 +336,8 @@ const UI = (() => {
     const req = f.required ? '<span class="req"> *</span>' : "";
     const hint = f.hint ? `<div class="hint">${U.escapeHtml(f.hint)}</div>` : "";
     const label = `<label for="fld-${f.key}">${U.escapeHtml(f.label)}${req}</label>`;
-    const wrap = inner => `<div class="field ${span}" data-field-wrap="${f.key}">${label}${inner}${hint}</div>`;
+    const actionBtn = f.actionBtn ? `<button type="button" class="btn btn-sm" data-field-action="${f.key}" style="margin-top:6px">${U.escapeHtml(f.actionBtn.label)}</button>` : "";
+    const wrap = inner => `<div class="field ${span}" data-field-wrap="${f.key}">${label}${inner}${actionBtn}${hint}</div>`;
     const esc = U.escapeHtml;
 
     switch (f.type) {
