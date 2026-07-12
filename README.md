@@ -37,6 +37,24 @@ deploys are picked up automatically on the next online launch).
 4. **Data lives per device.** Move data between desktop and phone with
    Settings → **Export JSON backup** (includes receipt attachments) → import on the other device.
 
+## Automatic phone ↔ desktop sync
+
+**Settings → ☁️ Phone & desktop sync.** All devices stay on the same books automatically —
+work orders, expenses, receipts (attachments included), everything. Data is stored in a
+**private GitHub repository** (`tax-app-data`) that only your account can see; it also acts
+as an off-device backup with full history (every sync is a git commit).
+
+- **Setup (once per device):** create one fine-grained GitHub token (the Settings card walks
+  you through it — token scoped to just the data repo, Contents read/write), then paste it
+  into Settings on each device and hit *Turn on sync*.
+- **When it syncs:** on app open, a few seconds after every change, when the app regains
+  focus/network, and every 4 minutes while open. Tap the ☁️ in the mobile top bar to force one.
+- **How conflicts resolve:** merged per record — the newest edit of each work order/expense/etc.
+  wins; deletions on one device propagate to the others (tombstones). Nothing is ever
+  overwritten wholesale.
+- **Safety rails:** sync refuses to write to a public repo, and the token is stored only on
+  the device (never in JSON backups or the synced data).
+
 ## First run
 
 You'll be offered **demo data** — realistic sample work orders, invoices, expenses, and trips

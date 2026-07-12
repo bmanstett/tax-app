@@ -81,6 +81,40 @@ Views.settings = {
         </div>
 
         <div>
+          <div class="card" id="st-sync-card">
+            <div class="card-title">☁️ Phone & desktop sync</div>
+            ${Sync.config.enabled ? `
+              <div class="card-sub">Syncing with <strong>${U.escapeHtml(Sync.config.repoFull)}</strong> (private GitHub repo).
+                ${Sync.config.lastSyncAt ? `Last sync: ${U.fmtDateTime(Sync.config.lastSyncAt)}.` : "First sync pending."}
+                ${Sync.lastError ? `<div style="color:var(--red);font-weight:700;margin-top:4px">${U.escapeHtml(Sync.lastError)}</div>` : ""}
+              </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+                <button class="btn btn-primary" id="st-sync-now">🔄 Sync now</button>
+                <button class="btn" id="st-sync-off">Turn off on this device</button>
+              </div>
+              <div class="hint" style="font-size:11.5px;color:var(--text-3)">Changes sync automatically — when the app opens, a few seconds after every edit, and every few minutes while open. Receipts included. Turning sync off keeps all data on this device.</div>
+            ` : `
+              <div class="card-sub">Keep this device and your other devices on the same books automatically — work orders, expenses, receipts, everything. Data goes to a <strong>private</strong> GitHub repo that only your account can see.</div>
+              <div class="field" style="margin-bottom:8px">
+                <label>GitHub access token</label>
+                <input type="password" id="st-sync-token" placeholder="github_pat_… " autocomplete="off">
+              </div>
+              <div class="field" style="margin-bottom:8px">
+                <label>Data repository</label>
+                <input type="text" id="st-sync-repo" value="bmanstett/tax-app-data">
+              </div>
+              <button class="btn btn-primary" id="st-sync-enable">Turn on sync</button>
+              <div class="hint" style="font-size:11.5px;color:var(--text-3);margin-top:8px">
+                <strong>One-time setup (same token on every device):</strong><br>
+                1. Open <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">github.com/settings/personal-access-tokens/new</a> (sign in as the account that owns the data repo).<br>
+                2. Name it <em>tax-app-sync</em>, set Expiration to <em>Custom → 1 year out</em>.<br>
+                3. Repository access → <em>Only select repositories</em> → pick <em>tax-app-data</em>.<br>
+                4. Permissions → Repository permissions → <em>Contents</em> → <em>Read and write</em>.<br>
+                5. Generate, copy the token, and paste it above — here and once on each other device.
+              </div>
+            `}
+          </div>
+
           <div class="card">
             <div class="card-title">💾 Backup & restore</div>
             <div class="card-sub">${s.lastBackupAt ? `Last backup: ${U.fmtDateTime(s.lastBackupAt)}` : "No backup exported yet"} ${Store.backupDue() ? UI.badge("Backup due", "amber") : UI.badge("Backed up recently", "green")}</div>
@@ -187,6 +221,36 @@ Views.settings = {
           <input type="number" step="0.005" data-rate-year="${yr}" value="0.70" style="width:110px;padding:8px;border:1px solid var(--border-strong);border-radius:8px;background:var(--bg-elev);color:var(--text)">
           <span style="font-size:12px;color:var(--text-3)">$/mi</span>
         </div>`);
+    });
+
+    /* ---- sync ---- */
+    const syncEnable = g("#st-sync-enable");
+    if (syncEnable) syncEnable.addEventListener("click", async () => {
+      const token = g("#st-sync-token").value.trim();
+      const repo = g("#st-sync-repo").value.trim();
+      if (!token) { UI.toast("Paste the access token first", "error"); return; }
+      if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) { UI.toast("Repository should look like owner/name", "error"); return; }
+      syncEnable.disabled = true; syncEnable.textContent = "Connecting…";
+      try {
+        await Sync.enable(repo, token);
+        UI.toast("Sync is on — this device now stays up to date automatically", "success", 5000);
+        App.rerender();
+      } catch (err) {
+        UI.toast(err.message, "error", 8000);
+        syncEnable.disabled = false; syncEnable.textContent = "Turn on sync";
+      }
+    });
+    const syncNow = g("#st-sync-now");
+    if (syncNow) syncNow.addEventListener("click", async () => {
+      syncNow.disabled = true; syncNow.textContent = "Syncing…";
+      await Sync.now();
+      App.rerender();
+    });
+    const syncOff = g("#st-sync-off");
+    if (syncOff) syncOff.addEventListener("click", async () => {
+      const ok = await UI.confirm("Turn off sync on this device?",
+        "This device stops sending and receiving changes. Nothing is deleted — local data stays, and other devices keep syncing.", { confirmLabel: "Turn off" });
+      if (ok) { Sync.disable(); UI.toast("Sync turned off on this device"); App.rerender(); }
     });
 
     /* ---- backup / restore ---- */

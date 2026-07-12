@@ -57,8 +57,9 @@ const Income = (() => {
         const amt = Number(m.body.querySelector(`[data-amt="${i}"]`).value) || 0;
         const S = Store.state;
         let rec = S.form1099s.find(f => f.clientId === r.clientId && Number(f.taxYear) === year);
-        if (!rec) { rec = { id: U.uid("f9"), clientId: r.clientId, taxYear: year }; S.form1099s.push(rec); }
+        if (!rec) { rec = { id: U.uid("f9"), clientId: r.clientId, taxYear: year, createdAt: U.nowISO() }; S.form1099s.push(rec); }
         rec.expected = r.expected; rec.received = received; rec.amountReceived = amt;
+        rec.updatedAt = U.nowISO();
       });
       Store.save();
       UI.toast("1099 reconciliation saved", "success");
