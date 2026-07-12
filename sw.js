@@ -6,7 +6,7 @@
    ========================================================= */
 "use strict";
 
-const CACHE = "anstett-books-v1";
+const CACHE = "anstett-books-v2";
 
 self.addEventListener("install", () => self.skipWaiting());
 
@@ -21,7 +21,9 @@ self.addEventListener("activate", e => {
 self.addEventListener("fetch", e => {
   if (e.request.method !== "GET" || !e.request.url.startsWith(self.location.origin)) return;
   e.respondWith(
-    fetch(e.request)
+    // cache: "no-cache" bypasses the browser's heuristic HTTP cache (revalidates
+    // with the server), so new deploys are picked up on the next online launch
+    fetch(e.request, { cache: "no-cache" })
       .then(res => {
         if (res.ok) {
           const copy = res.clone();
