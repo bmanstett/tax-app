@@ -95,17 +95,14 @@ input, select, textarea { font-family: inherit; font-size: 15px; }
   overflow-y: auto; scrollbar-width: thin;
 }
 .sidebar-brand { display: flex; align-items: center; gap: 12px; padding: 20px 18px 16px; }
-.brand-mark {
-  width: 40px; height: 40px; border-radius: 11px; flex: none;
-  background: #16324f;
-  border: 1px solid rgba(255,255,255,.14);
-  display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 4px 14px rgba(22,50,79,.55);
+.brand-a { flex: none; display: block; }
+.sidebar-brand .brand-text {
+  border-left: 1.5px solid rgba(255,255,255,.28);
+  padding-left: 12px;
 }
-.brand-mark.sm { width: 32px; height: 32px; border-radius: 9px; }
 .brand-name { font-weight: 800; color: #fff; font-size: 15px; letter-spacing: .22em; }
-.brand-sub { font-size: 9px; color: #9fb0c9; letter-spacing: .14em; }
-.brand-tag { font-size: 10.5px; color: var(--text-3); margin-top: 2px; }
+.brand-sub { font-size: 8.5px; color: #9fb0c9; letter-spacing: .13em; }
+.brand-tag { font-size: 10.5px; color: var(--text-3); margin-top: 3px; }
 
 .sidebar-nav { flex: 1; padding: 6px 10px 12px; }
 .nav-group-label {

@@ -152,11 +152,11 @@ const Invoices = (() => {
         <div class="invoice-doc" id="invoice-print">
           <div style="display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap">
             <div>
-              <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
-                <svg viewBox="0 0 100 90" width="46" height="41" aria-hidden="true"><path d="M40 0 L60 0 L98 90 L76 90 L67.5 68 L32.5 68 L24 90 L2 90 Z" fill="#16324f"/><path d="M50 24 L61.5 56 L38.5 56 Z" fill="#fff"/><path d="M-2 63 L37 50 L41.5 61 L2.5 74 Z" fill="#fff"/></svg>
-                <div>
-                  <div style="font-weight:800;font-size:17px;letter-spacing:.2em;color:#16324f">ANSTETT</div>
-                  <div style="font-size:9px;letter-spacing:.16em;color:#64748b">CONSULTING, LLC</div>
+              <div style="display:flex;align-items:center;gap:14px;margin-bottom:10px">
+                <svg viewBox="0 0 100 90" width="48" height="43" aria-hidden="true"><path d="M26 0 L70 0 L94 90 L4 90 Z" fill="#1e3350"/><path d="M35 13 L52 13 L58 58 L24 58 Z" fill="#fff"/><path d="M31 70 L59 70 L63 90 L31 90 Z" fill="#fff"/></svg>
+                <div style="border-left:1.5px solid #1e3350;padding-left:14px">
+                  <div style="font-weight:800;font-size:18px;letter-spacing:.22em;color:#1e3350">ANSTETT</div>
+                  <div style="font-size:9px;letter-spacing:.18em;color:#94a3b8">— CONSULTING, LLC —</div>
                 </div>
               </div>
               <h1>INVOICE</h1>
