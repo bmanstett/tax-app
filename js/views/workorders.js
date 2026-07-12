@@ -54,6 +54,21 @@ const WO = (() => {
     return w.flatFee ? U.money(w.flatFee) : (w.feeType || "—");
   }
 
+  /** Expected service fee for a job that hasn't been invoiced yet (organizer estimate). */
+  function expectedFee(w) {
+    if (w.feeType === "Hourly" || w.feeType === "T&E") {
+      const hrs = Number(w.actualHours) || Number(w.estimatedHours) || 0;
+      return U.round2(hrs * (Number(w.hourlyRate) || 0));
+    }
+    return Number(w.flatFee) || 0; // Flat Fee / Do-Not-Exceed Budget
+  }
+
+  /** true when the job is expected to produce an invoice but none exists yet */
+  function isPendingInvoice(w) {
+    if (![...SCHEMA.woOpenStatuses, "Submitted"].includes(w.status)) return false;
+    return !Store.state.invoices.some(i => i.workOrderId === w.id);
+  }
+
   /* ---- quick status change ---- */
   const STATUS_DATE_STAMPS = { Inspected: "inspectionDate", Submitted: "reportSubmittedDate", Invoiced: "invoiceDate", Paid: "paymentDate" };
 
@@ -109,7 +124,9 @@ const WO = (() => {
   function createInvoiceFrom(w, detailModal) {
     const client = Store.get("client", w.clientId);
     const L = linked(w);
-    const miReimb = U.round2(U.sum(L.mileage.filter(m => m.reimbursable && !m.reimbursed), m => Store.tripDeduction(m) + (Number(m.parking) || 0) + (Number(m.tolls) || 0)));
+    const miReimb = w.mileageReimbType === "Flat fee" && Number(w.mileageFlatFee)
+      ? Number(w.mileageFlatFee)
+      : U.round2(U.sum(L.mileage.filter(m => m.reimbursable && !m.reimbursed), m => Store.tripDeduction(m) + (Number(m.parking) || 0) + (Number(m.tolls) || 0)));
     const exReimb = U.round2(U.sum(L.expenses.filter(e => e.reimbursable && !e.reimbursed), e => e.amount));
     const nextNum = `INV-${App.viewYear()}-${String(Store.all("invoice").length + 1).padStart(3, "0")}`;
     const terms = (client && client.paymentTerms) || Store.state.settings.defaultPaymentTerms || "Net 30";
@@ -203,6 +220,7 @@ const WO = (() => {
         <div class="card" style="margin-bottom:14px">
           <div class="card-title">💼 Job financials (estimates)</div>
           <div class="detail-grid">
+            ${isPendingInvoice(w) ? `<div class="detail-item"><div class="detail-label">Pending fee (not invoiced)</div><div class="detail-value" style="font-weight:800;color:var(--purple)">${U.money(expectedFee(w))}</div></div>` : ""}
             <div class="detail-item"><div class="detail-label">Invoiced</div><div class="detail-value">${U.money(fin.invoiced)}</div></div>
             <div class="detail-item"><div class="detail-label">Income received</div><div class="detail-value">${U.money(fin.income)}</div></div>
             <div class="detail-item"><div class="detail-label">Job costs (unreimbursed)</div><div class="detail-value">${U.money(fin.costs)}</div></div>
@@ -255,7 +273,11 @@ const WO = (() => {
           ["Payment date", U.fmtDate(w.paymentDate)],
           ["Fee", `${val(w.feeType)} · ${feeText(w)}`],
           ["Hours est / actual", `${w.estimatedHours || "—"} / ${w.actualHours || "—"}`],
-          ["Mileage reimbursable", w.mileageAllowed ? "Yes" + (w.mileageAmount ? " — " + val(w.mileageAmount) : "") : "No"],
+          ["Mileage reimbursable", w.mileageAllowed
+            ? (w.mileageReimbType === "Flat fee"
+              ? `Yes — flat fee ${w.mileageFlatFee ? U.money(w.mileageFlatFee) : "(amount not set)"}`
+              : "Yes" + (w.mileageAmount ? " — " + val(w.mileageAmount) : " — per mile"))
+            : "No"],
           ["Parking/tolls budget", w.parkingTolls ? U.money(w.parkingTolls) : "—"],
           ["Upload location", val(w.uploadLocation)],
           ["Report remittance", multiline(w.reportRemittance)],
@@ -325,7 +347,7 @@ const WO = (() => {
     });
   }
 
-  return { openEditor, openDetail, duplicate, createInvoiceFrom, warnings, jobFinancials, feeText, linked, changeStatus, openStatusSheet };
+  return { openEditor, openDetail, duplicate, createInvoiceFrom, warnings, jobFinancials, feeText, linked, changeStatus, openStatusSheet, expectedFee, isPendingInvoice };
 })();
 
 Views.workorders = {

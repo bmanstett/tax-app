@@ -10,12 +10,37 @@ window.Views = window.Views || {};
    INCOME
    ================================================================ */
 const Income = (() => {
+  /** Logging income against an invoice reconciles it: amountPaid/status update,
+      and (via Invoices.syncWorkOrder) the work order auto-closes when paid off. */
+  function reconcileInvoice(invoiceId, incomeVals) {
+    if (!invoiceId) return;
+    const inv = Store.get("invoice", invoiceId);
+    if (!inv || ["Paid", "Written Off"].includes(inv.status)) return;
+    const paidSum = U.round2(U.sum(Store.state.income.filter(i => i.invoiceId === invoiceId), i => i.amount));
+    if (paidSum <= 0.005) return;
+    const total = Store.invoiceTotal(inv);
+    const patch = { amountPaid: paidSum };
+    if (paidSum >= total - 0.005) {
+      patch.status = "Paid";
+      patch.paymentDate = inv.paymentDate || incomeVals.date || U.todayISO();
+      if (!inv.paymentMethod && incomeVals.paymentMethod) patch.paymentMethod = incomeVals.paymentMethod;
+    } else {
+      patch.status = "Partial";
+    }
+    const saved = Store.update("invoice", inv.id, patch);
+    if (saved) {
+      UI.toast(`Invoice ${inv.invoiceNumber} → ${patch.status}`, "success");
+      Invoices.syncWorkOrder(saved);
+    }
+  }
+
   function openEditor(rec, presets) {
     UI.openForm("income", rec, {
       presets,
       onSave: vals => {
         if (rec) Store.update("income", rec.id, vals); else Store.add("income", vals);
         UI.toast(rec ? "Income updated" : "Income added", "success");
+        reconcileInvoice(vals.invoiceId, vals);
         App.rerender();
       },
       deleteFn: r => { Store.remove("income", r.id); UI.toast("Income deleted"); App.rerender(); },

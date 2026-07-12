@@ -17,6 +17,8 @@ Views.dashboard = {
     const openWOs = wos.filter(w => SCHEMA.woOpenStatuses.includes(w.status));
     const unbilledWOs = wos.filter(w => w.status === "Submitted");
     const closedWOs = wos.filter(w => ["Paid", "Closed"].includes(w.status));
+    const pendingWOs = wos.filter(WO.isPendingInvoice);
+    const pendingFees = U.sum(pendingWOs, WO.expectedFee);
     const outstanding = S.invoices.filter(i => ["Sent", "Partial", "Overdue"].includes(i.status) && Store.invoiceBalance(i) > 0.005);
     const overdue = outstanding.filter(Store.invoiceIsOverdue);
     const paidInv = d.invoices.filter(i => i.status === "Paid");
@@ -75,6 +77,7 @@ Views.dashboard = {
         ${UI.statCard({ label: "YTD Expenses (deductible est.)", value: U.money(t.deductibleExpenses), sub: `+ ${U.money(t.mileageDeduction)} est. mileage`, color: "red", icon: "💳", onClickRoute: "expenses" })}
         ${UI.statCard({ label: "Estimated Net Profit", value: U.money(t.netProfit), sub: "before CPA adjustments", color: "accent", icon: "📈" })}
         ${UI.statCard({ label: "Total Tax Reserve (est.)", value: U.money(t.totalReserve), sub: `SE ${U.money(t.seTax, { cents: false })} · Fed ${U.money(t.fedReserve, { cents: false })} · State ${U.money(t.stateReserve, { cents: false })}`, color: "purple", icon: "🏛️", onClickRoute: "taxes" })}
+        ${UI.statCard({ label: "Pending Fees (not yet invoiced)", value: U.money(pendingFees), sub: `${pendingWOs.length} work order(s) awaiting invoice`, color: "purple", icon: "⏳", onClickRoute: "workorders" })}
         ${UI.statCard({ label: "Outstanding Invoices", value: U.money(U.sum(outstanding, Store.invoiceBalance)), sub: `${outstanding.length} open · ${overdue.length} overdue`, color: overdue.length ? "red" : "blue", icon: "🧾", onClickRoute: "invoices" })}
         ${UI.statCard({ label: "Work Orders", value: `${openWOs.length} open`, sub: `${unbilledWOs.length} unbilled · ${closedWOs.length} closed`, color: "teal", icon: "📋", onClickRoute: "workorders" })}
         ${UI.statCard({ label: "Business Miles (YTD)", value: U.num(t.mileageMiles, 0), sub: `≈ ${U.money(t.mileageDeduction)} deduction @ $${t.mileageRate.toFixed(2)}/mi`, color: "amber", icon: "🚗", onClickRoute: "mileage" })}

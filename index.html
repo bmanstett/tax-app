@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#0f172a">
+<meta name="theme-color" content="#16324f">
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-title" content="Books">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <title>Anstett Consulting, LLC — Books &amp; Tax Organizer</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%230ea5e9'/><text x='50' y='68' font-size='52' text-anchor='middle' fill='white' font-family='Arial' font-weight='bold'>A</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%2316324f'/><g transform='translate(19,23) scale(0.62)'><path d='M40 0 L60 0 L98 90 L76 90 L67.5 68 L32.5 68 L24 90 L2 90 Z' fill='white'/><path d='M50 24 L61.5 56 L38.5 56 Z' fill='%2316324f'/><path d='M-2 63 L37 50 L41.5 61 L2.5 74 Z' fill='%2316324f'/></g></svg>">
 <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
@@ -19,10 +19,13 @@
   <!-- ===== Sidebar (desktop) ===== -->
   <aside id="sidebar" class="sidebar">
     <div class="sidebar-brand">
-      <div class="brand-mark">A</div>
+      <div class="brand-mark">
+        <svg viewBox="0 0 100 90" width="26" height="23" aria-hidden="true"><path d="M40 0 L60 0 L98 90 L76 90 L67.5 68 L32.5 68 L24 90 L2 90 Z" fill="#fff"/><path d="M50 24 L61.5 56 L38.5 56 Z" fill="#16324f"/><path d="M-2 63 L37 50 L41.5 61 L2.5 74 Z" fill="#16324f"/></svg>
+      </div>
       <div class="brand-text">
-        <div class="brand-name">Anstett Consulting</div>
-        <div class="brand-sub">Books &amp; Tax Organizer</div>
+        <div class="brand-name">ANSTETT</div>
+        <div class="brand-sub">CONSULTING, LLC</div>
+        <div class="brand-tag">Books &amp; Tax Organizer</div>
       </div>
     </div>
     <nav class="sidebar-nav" id="sidebar-nav"><!-- populated by app.js --></nav>
@@ -42,7 +45,9 @@
 
   <!-- ===== Mobile top bar ===== -->
   <header class="mobile-topbar">
-    <div class="brand-mark sm">A</div>
+    <div class="brand-mark sm">
+      <svg viewBox="0 0 100 90" width="19" height="17" aria-hidden="true"><path d="M40 0 L60 0 L98 90 L76 90 L67.5 68 L32.5 68 L24 90 L2 90 Z" fill="#fff"/><path d="M50 24 L61.5 56 L38.5 56 Z" fill="#16324f"/><path d="M-2 63 L37 50 L41.5 61 L2.5 74 Z" fill="#16324f"/></svg>
+    </div>
     <div class="mobile-title" id="mobile-title">Dashboard</div>
     <button class="btn btn-ghost btn-icon" id="sync-mobile" title="Sync now" hidden>☁️</button>
     <button class="btn btn-ghost btn-icon" id="theme-toggle-mobile" title="Toggle theme">

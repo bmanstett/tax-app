@@ -197,7 +197,9 @@ SCHEMA.fields.workOrder = [
   F("estimatedHours", "Estimated Hours", "number", { step: 0.25 }),
   F("actualHours", "Actual Hours", "number", { step: 0.25 }),
   F("mileageAllowed", "Mileage Reimbursable?", "checkbox"),
-  F("mileageAmount", "Mileage Reimbursement Rate/Amount", "text", { placeholder: "e.g. IRS rate, $0.70/mi, or flat $50", showIf: r => !!r.mileageAllowed }),
+  F("mileageReimbType", "Mileage Reimbursed As", "select", { options: ["Per mile (IRS/agreed rate)", "Flat fee"], default: "Per mile (IRS/agreed rate)", showIf: r => !!r.mileageAllowed }),
+  F("mileageFlatFee", "Mileage Flat Fee Amount", "money", { showIf: r => !!r.mileageAllowed && r.mileageReimbType === "Flat fee" }),
+  F("mileageAmount", "Mileage Rate Note", "text", { placeholder: "e.g. IRS rate, $0.70/mi, cap 145 mi", showIf: r => !!r.mileageAllowed && r.mileageReimbType !== "Flat fee" }),
   F("parkingTolls", "Parking / Tolls Budget", "money"),
 
   F("_s7", "Remittance & Delivery", "section"),

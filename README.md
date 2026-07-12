@@ -65,8 +65,8 @@ Clear it anytime: **Settings → Clear ALL data**, then start fresh.
 
 | Section | What it does |
 |---|---|
-| **Dashboard** | YTD income/expenses/net, tax reserve estimates, invoice aging, readiness scores, "what needs attention" |
-| **Work Orders** | Full forensic-engineering job tracker (claim/policy/CAT, insured, loss location, scope, fees, remittance) with **one-tap status changes** (tap the status badge in the list, or the status pipeline in the job detail — dates like report-submitted/invoice/payment are stamped automatically), due-date alerts, quick actions (add mileage/expense/receipt, create invoice, duplicate, export summary) — plus **📄 Import FCGA PDF**: drop an FCGA "Engineer Work Order Form" PDF and every field is parsed into a pre-filled work order (see below) |
+| **Dashboard** | YTD income/expenses/net, **pending fees from work orders not yet invoiced**, tax reserve estimates, invoice aging, readiness scores, "what needs attention" |
+| **Work Orders** | Full forensic-engineering job tracker (claim/policy/CAT, insured, loss location, scope, fees, remittance) with **one-tap status changes** (tap the status badge in the list, or the status pipeline in the job detail — dates like report-submitted/invoice/payment are stamped automatically), due-date alerts, quick actions (add mileage/expense/receipt, create invoice, duplicate, export summary), **mileage reimbursable per-mile or as a flat fee** (flows into invoices automatically), and **hands-free status flow** — marking an invoice Sent moves the job to Invoiced; a paid invoice or matching income entry closes it — plus **📄 Import FCGA PDF**: drop an FCGA "Engineer Work Order Form" PDF and every field is parsed into a pre-filled work order (see below) |
 | **Clients** | Rates, terms, W-9/1099 flags, profitability, average payment time, 1099 reconciliation status |
 | **Invoices** | Flat/hourly billing + mileage & expense reimbursements, aging, partial payments, printable invoice, income reconciliation |
 | **Income** | All money in, 1099 tracking, and the **1099 Reconciliation tool** (compare 1099s received vs. recorded income) |

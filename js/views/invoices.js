@@ -8,6 +8,21 @@ window.Views = window.Views || {};
 
 const Invoices = (() => {
 
+  /** Cascade invoice status to the linked work order:
+      Sent → WO "Invoiced" · Paid → WO "Closed" (dates stamped). */
+  function syncWorkOrder(inv) {
+    if (!inv || !inv.workOrderId) return;
+    const w = Store.get("workOrder", inv.workOrderId);
+    if (!w) return;
+    if (inv.status === "Sent" && [...SCHEMA.woOpenStatuses, "Submitted"].includes(w.status)) {
+      Store.update("workOrder", w.id, { status: "Invoiced", invoiceDate: w.invoiceDate || inv.invoiceDate || U.todayISO() });
+      UI.toast(`${w.woNumber || "Work order"} → Invoiced (auto)`, "success");
+    } else if (inv.status === "Paid" && !["Closed", "Cancelled"].includes(w.status)) {
+      Store.update("workOrder", w.id, { status: "Closed", paymentDate: w.paymentDate || inv.paymentDate || U.todayISO() });
+      UI.toast(`${w.woNumber || "Work order"} → Closed (auto)`, "success");
+    }
+  }
+
   function openEditor(rec, presets) {
     UI.openForm("invoice", rec, {
       presets,
@@ -18,6 +33,7 @@ const Invoices = (() => {
         if (paid > 0.005 && paid < tot - 0.005 && ["Draft", "Sent", "Paid"].includes(vals.status)) vals.status = "Partial";
         if (tot > 0 && paid >= tot - 0.005 && vals.status !== "Written Off") vals.status = "Paid";
         const saved = rec ? Store.update("invoice", rec.id, vals) : Store.add("invoice", vals);
+        if (saved) syncWorkOrder(saved);
         // reconcile: if just marked paid, offer to log income
         if (saved && saved.status === "Paid" && paid > 0) {
           const already = Store.state.income.some(i => i.invoiceId === saved.id);
@@ -52,6 +68,7 @@ const Invoices = (() => {
       patch.paymentDate = inv.paymentDate || U.todayISO();
     }
     const saved = Store.update("invoice", inv.id, patch);
+    if (saved) syncWorkOrder(saved);
     if (status === "Paid" && saved && !Store.state.income.some(i => i.invoiceId === inv.id)) offerIncome(saved);
     UI.toast(`Marked ${status.toLowerCase()}`, "success");
     App.rerender();
@@ -86,6 +103,13 @@ const Invoices = (() => {
         <div class="invoice-doc" id="invoice-print">
           <div style="display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap">
             <div>
+              <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+                <svg viewBox="0 0 100 90" width="46" height="41" aria-hidden="true"><path d="M40 0 L60 0 L98 90 L76 90 L67.5 68 L32.5 68 L24 90 L2 90 Z" fill="#16324f"/><path d="M50 24 L61.5 56 L38.5 56 Z" fill="#fff"/><path d="M-2 63 L37 50 L41.5 61 L2.5 74 Z" fill="#fff"/></svg>
+                <div>
+                  <div style="font-weight:800;font-size:17px;letter-spacing:.2em;color:#16324f">ANSTETT</div>
+                  <div style="font-size:9px;letter-spacing:.16em;color:#64748b">CONSULTING, LLC</div>
+                </div>
+              </div>
               <h1>INVOICE</h1>
               <div style="font-size:13px;margin-top:6px;color:#475569">
                 <strong style="color:#0f172a">${U.escapeHtml(s.businessName)}</strong><br>
@@ -173,7 +197,7 @@ const Invoices = (() => {
     });
   }
 
-  return { openEditor, openDetail, preview, markStatus, agingBucket };
+  return { openEditor, openDetail, preview, markStatus, agingBucket, syncWorkOrder };
 })();
 
 Views.invoices = {
