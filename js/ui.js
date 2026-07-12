@@ -553,6 +553,30 @@ const UI = (() => {
     return { close };
   }
 
+  /* ================= Print isolation ================= */
+  /**
+   * Print ONLY the given element: it's cloned into #print-root and the rest
+   * of the app is hidden for the duration, so the PDF contains just the
+   * document — no page/dashboard front matter.
+   */
+  function printDoc(el) {
+    if (!el) { window.print(); return; }
+    const root = document.getElementById("print-root");
+    root.innerHTML = "";
+    const clone = el.cloneNode(true);
+    clone.querySelectorAll(".no-print").forEach(x => x.remove());
+    root.appendChild(clone);
+    document.body.classList.add("print-mode");
+    const cleanup = () => {
+      document.body.classList.remove("print-mode");
+      root.innerHTML = "";
+      window.removeEventListener("afterprint", cleanup);
+    };
+    window.addEventListener("afterprint", cleanup);
+    setTimeout(cleanup, 60000); // safety net if afterprint never fires
+    window.print();
+  }
+
   /* ================= Misc ================= */
   const disclaimerHtml = () => `<div class="disclaimer"><strong>Disclaimer:</strong> ${U.escapeHtml(SCHEMA.DISCLAIMER)}</div>`;
 
@@ -560,6 +584,6 @@ const UI = (() => {
 
   return {
     toast, modal, confirm, badge, statusBadge, statCard, emptyState, pageHeader,
-    detailGrid, openForm, listView, sheet, disclaimerHtml, linkChip, viewAttachment,
+    detailGrid, openForm, listView, sheet, disclaimerHtml, linkChip, viewAttachment, printDoc,
   };
 })();

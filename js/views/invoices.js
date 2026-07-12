@@ -195,7 +195,7 @@ const Invoices = (() => {
                <button class="btn btn-primary" id="inv-pv-print">🖨️ Print / Save PDF</button>`,
     });
     m.footerEl.querySelector("#inv-pv-close").addEventListener("click", () => m.close());
-    m.footerEl.querySelector("#inv-pv-print").addEventListener("click", () => window.print());
+    m.footerEl.querySelector("#inv-pv-print").addEventListener("click", () => UI.printDoc(m.body.querySelector("#invoice-print")));
   }
 
   function openDetail(inv) {

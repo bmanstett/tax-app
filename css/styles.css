@@ -464,6 +464,7 @@ table.data-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 .invoice-doc .inv-total-row td { font-weight: 800; font-size: 15px; border-top: 2px solid #0f172a; border-bottom: none; }
 
 /* ===== Print ===== */
+#print-root { display: none; }
 @media print {
   .sidebar, .bottom-nav, .fab, .mobile-topbar, .page-actions, .toolbar, .toast-root, .no-print { display: none !important; }
   .main { margin: 0; padding: 0; max-width: none; }
@@ -473,6 +474,22 @@ table.data-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
   .modal { max-width: none; max-height: none; box-shadow: none; border: none; }
   .modal-header, .modal-footer { display: none; }
   a { color: #000; text-decoration: none; }
+
+  /* Document printing: only the cloned document in #print-root is visible,
+     with light-theme colors regardless of the app theme */
+  body.print-mode #app { display: none !important; }
+  body.print-mode #print-root { display: block !important; }
+  body.print-mode {
+    --text: #0f172a; --text-2: #334155; --text-3: #64748b;
+    --border: #cbd5e1; --border-strong: #94a3b8;
+    --bg: #fff; --bg-elev: #fff;
+    --accent: #0284c7; --accent-strong: #075985;
+    --green: #15803d; --red: #b91c1c; --amber: #b45309;
+  }
+  #print-root .invoice-doc, #print-root .report-doc { box-shadow: none; border-radius: 0; padding: 0; max-width: none; }
+  #print-root .table-wrap { overflow: visible; }
+  #print-root table { break-inside: auto; }
+  #print-root tr { break-inside: avoid; }
 }
 
 /* =========================================================

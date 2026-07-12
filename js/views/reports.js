@@ -47,7 +47,7 @@ const Reports = (() => {
         <button class="btn btn-primary" id="rp-print">🖨️ Print / Save PDF</button>`,
     });
     m.footerEl.querySelector("#rp-close").addEventListener("click", () => m.close());
-    m.footerEl.querySelector("#rp-print").addEventListener("click", () => window.print());
+    m.footerEl.querySelector("#rp-print").addEventListener("click", () => UI.printDoc(m.body.querySelector(".report-doc")));
     if (csv) m.footerEl.querySelector("#rp-csv").addEventListener("click", () => { U.download(csv.name, csv.content, "text/csv"); UI.toast("CSV downloaded", "success"); });
   }
 
