@@ -143,7 +143,9 @@ Views.settings = {
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
               <button class="btn" id="st-integrity">Run integrity check</button>
               <button class="btn" id="st-dupes">Find duplicates</button>
+              <button class="btn" id="st-fix-incdates">Sync income dates to invoice payments</button>
             </div>
+            <div class="hint" style="font-size:11.5px;color:var(--text-3);margin-bottom:8px">“Sync income dates” re-dates each invoice-linked income entry to that invoice’s <strong>payment date</strong>, so the monthly income / net-profit charts land in the month the invoice was actually paid. (Set the payment date on each invoice first.)</div>
             <div id="st-health-out"></div>
           </div>
 
@@ -312,6 +314,17 @@ Views.settings = {
         ? `<div style="font-size:12.5px;font-weight:700;color:var(--red);margin-bottom:5px">${issues.length} issue(s):</div>` +
           issues.map(i => `<div style="font-size:12.5px;color:var(--text-2);padding:3px 0;border-bottom:1px dashed var(--border)">• ${U.escapeHtml(i)}</div>`).join("")
         : `<div style="font-size:13px;color:var(--green);font-weight:700">✓ No integrity issues found.</div>`;
+    });
+    g("#st-fix-incdates").addEventListener("click", () => {
+      let n = 0, invoicesWithoutDate = 0;
+      Store.state.invoices.forEach(inv => {
+        const linked = Store.state.income.some(i => i.invoiceId === inv.id);
+        if (inv.paymentDate) n += Invoices.syncIncomeDates(inv);
+        else if (linked) invoicesWithoutDate++;
+      });
+      g("#st-health-out").innerHTML = `<div style="font-size:13px;font-weight:700;color:${n ? "var(--green)" : "var(--text-2)"}">${n ? `✓ Re-dated ${n} income entr${n > 1 ? "ies" : "y"} to match invoice payment dates. Your monthly charts now reflect them.` : "No changes — income dates already match invoice payment dates."}</div>` +
+        (invoicesWithoutDate ? `<div class="hint" style="font-size:12px;color:var(--amber);margin-top:5px">${invoicesWithoutDate} paid invoice(s) have no payment date set — open each and set its Payment Date, then run this again.</div>` : "");
+      if (n) UI.toast(`Updated ${n} income date${n > 1 ? "s" : ""}`, "success");
     });
     g("#st-dupes").addEventListener("click", () => {
       const dupes = Store.findDuplicates();
