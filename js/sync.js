@@ -312,15 +312,15 @@ const Sync = (() => {
     setStatus(cfg.enabled ? "ok" : "off");
     // wire triggers unconditionally — scheduleSync() is a no-op while disabled,
     // so enabling later in Settings starts syncing without a reload
-    Store.onSave(() => { if (!applying) scheduleSync(1500); });
-    window.addEventListener("online", () => scheduleSync(1000));
+    Store.onSave(() => { if (!applying) scheduleSync(700); });   // push edits ~0.7s after a change
+    window.addEventListener("online", () => scheduleSync(400));
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible" &&
-          (!cfg.lastSyncAt || Date.now() - new Date(cfg.lastSyncAt).getTime() > 15000)) scheduleSync(300);
-      // push pending work the moment the app is backgrounded (best effort)
-      if (document.visibilityState === "hidden") { clearTimeout(scheduleTimer); sync(); }
+      // focus → pull the latest instantly; blur → push pending immediately. sync() does both.
+      clearTimeout(scheduleTimer); sync();
     });
-    setInterval(() => scheduleSync(0), 60 * 1000);
+    window.addEventListener("focus", () => { clearTimeout(scheduleTimer); sync(); });
+    // fast poll while the app is open/foreground; go quiet when hidden (battery/rate limits)
+    setInterval(() => { if (document.visibilityState !== "hidden") scheduleSync(0); }, 10 * 1000);
     const mob = document.getElementById("sync-mobile");
     if (mob) mob.addEventListener("click", () => sync({ manual: true }));
     if (cfg.enabled) scheduleSync(800);
