@@ -33,7 +33,7 @@ const Invoices = (() => {
         if (paid > 0.005 && paid < tot - 0.005 && ["Draft", "Sent", "Paid"].includes(vals.status)) vals.status = "Partial";
         if (tot > 0 && paid >= tot - 0.005 && vals.status !== "Written Off") vals.status = "Paid";
         const saved = rec ? Store.update("invoice", rec.id, vals) : Store.add("invoice", vals);
-        if (saved) syncWorkOrder(saved);
+        if (saved) { syncWorkOrder(saved); syncIncomeDates(saved); }
         // reconcile: if just marked paid, offer to log income (incl. any bonus)
         if (saved && saved.status === "Paid" && paid > 0) {
           const already = Store.state.income.some(i => i.invoiceId === saved.id && i.category !== BONUS_CATEGORY);
@@ -51,6 +51,17 @@ const Invoices = (() => {
 
   const BONUS_CATEGORY = "Bonus / Incentive Income";
   const bonusIncomeExists = inv => Store.state.income.some(i => i.invoiceId === inv.id && i.category === BONUS_CATEGORY);
+
+  /** Keep invoice-linked income entries dated to the invoice's payment date, so the
+      monthly income / net-profit / P&L views land in the month the invoice was paid. */
+  function syncIncomeDates(inv) {
+    if (!inv || !inv.paymentDate) return 0;
+    let n = 0;
+    Store.state.income.filter(i => i.invoiceId === inv.id).forEach(i => {
+      if (i.date !== inv.paymentDate) { Store.update("income", i.id, { date: inv.paymentDate }); n++; }
+    });
+    return n;
+  }
 
   async function offerIncome(inv) {
     const bonus = Number(inv.bonusAmount) || 0;
@@ -117,7 +128,7 @@ const Invoices = (() => {
       patch.paymentDate = inv.paymentDate || U.todayISO();
     }
     const saved = Store.update("invoice", inv.id, patch);
-    if (saved) syncWorkOrder(saved);
+    if (saved) { syncWorkOrder(saved); syncIncomeDates(saved); }
     if (status === "Paid" && saved && !Store.state.income.some(i => i.invoiceId === inv.id)) offerIncome(saved);
     UI.toast(`Marked ${status.toLowerCase()}`, "success");
     App.rerender();
@@ -248,7 +259,7 @@ const Invoices = (() => {
     });
   }
 
-  return { openEditor, openDetail, preview, markStatus, agingBucket, syncWorkOrder, verifiedBadge, offerBonusIncome };
+  return { openEditor, openDetail, preview, markStatus, agingBucket, syncWorkOrder, verifiedBadge, offerBonusIncome, syncIncomeDates };
 })();
 
 Views.invoices = {
