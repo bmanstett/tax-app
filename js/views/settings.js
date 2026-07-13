@@ -172,25 +172,37 @@ Views.settings = {
 
     const g = id => el.querySelector(id);
 
-    // PE numbers editor
+    // PE numbers editor — auto-saves on every change (no separate button needed)
+    function readPeNumbers() {
+      return [...el.querySelectorAll("#st-pes .pe-row")].map(row => ({
+        state: row.querySelector("[data-pe-state]").value.trim().toUpperCase(),
+        number: row.querySelector("[data-pe-num]").value.trim(),
+        expires: row.querySelector("[data-pe-exp]").value || "",
+      })).filter(p => p.number);
+    }
+    function savePeNumbers() {
+      const peNumbers = readPeNumbers();
+      s.peNumbers = peNumbers;
+      s.peNumber = peNumbers.length ? peNumbers[0].number : "";
+      Store.markSettingsChanged();   // persists + stamps for sync
+      App.refreshNav();
+    }
     g("#st-add-pe").addEventListener("click", () => {
       g("#st-pes").insertAdjacentHTML("beforeend", peRowHtml("", "", ""));
     });
     g("#st-pes").addEventListener("click", e => {
       const btn = e.target.closest("[data-pe-remove]");
-      if (btn) btn.closest(".pe-row").remove();
+      if (btn) { btn.closest(".pe-row").remove(); savePeNumbers(); }
     });
     g("#st-pes").addEventListener("input", e => {
       const exp = e.target.closest("[data-pe-exp]");
       if (exp) { const b = exp.closest(".pe-row").querySelector("[data-pe-badge]"); if (b) b.innerHTML = peExpiryBadge(exp.value); }
     });
+    // save when a field loses focus (change fires on blur for text + on pick for date)
+    g("#st-pes").addEventListener("change", () => savePeNumbers());
 
     g("#st-save-profile").addEventListener("click", () => {
-      const peNumbers = [...el.querySelectorAll("#st-pes .pe-row")].map(row => ({
-        state: row.querySelector("[data-pe-state]").value.trim().toUpperCase(),
-        number: row.querySelector("[data-pe-num]").value.trim(),
-        expires: row.querySelector("[data-pe-exp]").value || "",
-      })).filter(p => p.number);
+      const peNumbers = readPeNumbers();
       Object.assign(s, {
         businessName: g("#st-bizname").value.trim() || s.businessName,
         entityType: g("#st-entity").value.trim(),
