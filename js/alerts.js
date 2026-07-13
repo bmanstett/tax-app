@@ -145,6 +145,20 @@ const Alerts = (() => {
       items: (ho.usedRegularlyExclusively && ho.cpaReview) ? [ho] : [],
     });
 
+    /* --- PE / professional licenses --- */
+    const peExpiring = (S.settings.peNumbers || [])
+      .filter(p => p.number && p.expires)
+      .map(p => ({ ...p, daysLeft: U.daysFromToday(p.expires) }))
+      .filter(p => p.daysLeft <= 183)
+      .sort((a, b) => a.daysLeft - b.daysLeft);
+    push({
+      id: "pe-expiring", icon: "📜", route: "settings",
+      severity: peExpiring.some(p => p.daysLeft <= 60) ? "bad" : "warn", weight: 2,
+      title: "PE / license renewal coming up (within 6 months)",
+      sub: peExpiring.map(p => `${p.state ? p.state + " " : ""}${p.number} — ${p.daysLeft < 0 ? "EXPIRED" : "in " + p.daysLeft + "d"} (${U.fmtDate(p.expires)})`).join(" · "),
+      items: peExpiring,
+    });
+
     /* --- Quarterly taxes --- */
     const dueSoon = SCHEMA.quarterDueDates(Number(year)).filter(q => {
       const dd = U.daysFromToday(q.due);

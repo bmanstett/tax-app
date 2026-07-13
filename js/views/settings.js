@@ -13,12 +13,24 @@ Views.settings = {
     const rates = s.mileageRates || {};
     const rateYears = Object.keys(rates).map(Number).sort((a, b) => b - a);
 
-    function peRowHtml(state, number) {
-      return `<div class="pe-row" style="display:flex;gap:8px;align-items:center;margin-bottom:7px">
+    function peExpiryBadge(expires) {
+      if (!expires) return "";
+      const dd = U.daysFromToday(expires);
+      if (dd < 0) return UI.badge(`Expired ${-dd}d ago`, "red");
+      if (dd <= 60) return UI.badge(`Renew — ${dd}d left`, "red");
+      if (dd <= 183) return UI.badge(`Renew soon — ${dd}d`, "amber");
+      return UI.badge("Current", "green");
+    }
+    function peRowHtml(state, number, expires) {
+      const inp = "padding:8px;border:1px solid var(--border-strong);border-radius:8px;background:var(--bg-elev);color:var(--text)";
+      return `<div class="pe-row" style="display:flex;gap:8px;align-items:center;margin-bottom:7px;flex-wrap:wrap">
         <input type="text" data-pe-state maxlength="2" value="${U.escapeHtml(state || "")}" placeholder="ST"
-          style="width:64px;padding:8px;border:1px solid var(--border-strong);border-radius:8px;background:var(--bg-elev);color:var(--text);text-transform:uppercase;text-align:center">
+          style="width:52px;${inp};text-transform:uppercase;text-align:center">
         <input type="text" data-pe-num value="${U.escapeHtml(number || "")}" placeholder="PE / license number"
-          style="flex:1;padding:8px;border:1px solid var(--border-strong);border-radius:8px;background:var(--bg-elev);color:var(--text)">
+          style="flex:1;min-width:120px;${inp}">
+        <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-3)">Exp
+          <input type="date" data-pe-exp value="${U.escapeHtml(expires || "")}" title="License expiration date" style="${inp}"></label>
+        <span data-pe-badge>${peExpiryBadge(expires)}</span>
         <button class="btn btn-sm btn-ghost" data-pe-remove type="button" title="Remove">✕</button>
       </div>`;
     }
@@ -37,10 +49,10 @@ Views.settings = {
               <div class="field span-2">
                 <label>PE numbers by state</label>
                 <div id="st-pes">
-                  ${(s.peNumbers || []).map(p => peRowHtml(p.state, p.number)).join("")}
+                  ${(s.peNumbers || []).map(p => peRowHtml(p.state, p.number, p.expires)).join("")}
                 </div>
                 <button class="btn btn-sm" id="st-add-pe" type="button">＋ Add PE number</button>
-                <div class="hint">One row per state license (e.g. VA — 0402068317). Work order forms let you pick from this list, and PDF imports auto-match the loss-location state.</div>
+                <div class="hint">One row per state license (e.g. VA — 0402068317). Add the expiration date to get a renewal alert within 6 months. Work order forms let you pick from this list, and PDF imports auto-match the loss-location state.</div>
               </div>
               <div class="field"><label>Business start date</label><input type="date" id="st-start" value="${U.escapeHtml(s.businessStartDate || "")}"></div>
               <div class="field"><label>Home base (mileage start)</label><input type="text" id="st-homebase" value="${U.escapeHtml(s.homeBase || "")}"></div>
@@ -160,17 +172,22 @@ Views.settings = {
 
     // PE numbers editor
     g("#st-add-pe").addEventListener("click", () => {
-      g("#st-pes").insertAdjacentHTML("beforeend", peRowHtml("", ""));
+      g("#st-pes").insertAdjacentHTML("beforeend", peRowHtml("", "", ""));
     });
     g("#st-pes").addEventListener("click", e => {
       const btn = e.target.closest("[data-pe-remove]");
       if (btn) btn.closest(".pe-row").remove();
+    });
+    g("#st-pes").addEventListener("input", e => {
+      const exp = e.target.closest("[data-pe-exp]");
+      if (exp) { const b = exp.closest(".pe-row").querySelector("[data-pe-badge]"); if (b) b.innerHTML = peExpiryBadge(exp.value); }
     });
 
     g("#st-save-profile").addEventListener("click", () => {
       const peNumbers = [...el.querySelectorAll("#st-pes .pe-row")].map(row => ({
         state: row.querySelector("[data-pe-state]").value.trim().toUpperCase(),
         number: row.querySelector("[data-pe-num]").value.trim(),
+        expires: row.querySelector("[data-pe-exp]").value || "",
       })).filter(p => p.number);
       Object.assign(s, {
         businessName: g("#st-bizname").value.trim() || s.businessName,

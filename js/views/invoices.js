@@ -153,7 +153,7 @@ const Invoices = (() => {
           <div style="display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap">
             <div>
               <div style="display:flex;align-items:center;gap:14px;margin-bottom:10px">
-                <svg viewBox="0 0 100 90" width="48" height="43" aria-hidden="true"><path d="M26 0 L70 0 L94 90 L4 90 Z" fill="#1e3350"/><path d="M35 13 L52 13 L58 58 L24 58 Z" fill="#fff"/><path d="M31 70 L59 70 L63 90 L31 90 Z" fill="#fff"/></svg>
+                <svg viewBox="0 0 100 90" width="48" height="43" aria-hidden="true"><path d="M30 0 L64 0 L98 90 L4 90 Z" fill="#1e3350"/><path d="M44 16 L51 16 L60 57 L33 57 Z" fill="#fff"/><path d="M5 73 L29 58 L35 67 L11 82 Z" fill="#fff"/></svg>
                 <div style="border-left:1.5px solid #1e3350;padding-left:14px">
                   <div style="font-weight:800;font-size:18px;letter-spacing:.22em;color:#1e3350">ANSTETT</div>
                   <div style="font-size:9px;letter-spacing:.18em;color:#94a3b8">— CONSULTING, LLC —</div>

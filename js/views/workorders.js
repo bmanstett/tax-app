@@ -140,7 +140,8 @@ const WO = (() => {
   function mileageBillRate(w) {
     const m = String(w.mileageAmount || "").match(/\$?\s*(\d+(?:\.\d+)?)\s*(?:\/|per)\s*mi/i);
     if (m) { const r = Number(m[1]); if (r > 0 && r < 10) return r; }
-    return Store.mileageRate(U.yearOf(w.dateAssigned || U.todayISO()));
+    // IRS rate for the year the driving happened (inspection), else assignment year
+    return Store.mileageRate(U.yearOf(w.inspectionDate || w.dateAssigned || U.todayISO()));
   }
 
   function routeStart() {
