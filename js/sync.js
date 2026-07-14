@@ -21,7 +21,6 @@ const Sync = (() => {
     repoFull: "",        // "owner/repo"
     token: "",
     lastSyncAt: null,
-    lastSettingsFp: "",  // fingerprint of settings at last sync, to stamp settingsUpdatedAt
   };
   let running = false, queued = false, applying = false;
   let lastError = "";
@@ -96,12 +95,6 @@ const Sync = (() => {
   const COLLECTIONS = ["clients", "workOrders", "invoices", "income", "expenses", "mileage",
     "receipts", "assets", "contractors", "taxPayments", "form1099s"];
   const recTime = r => r.updatedAt || r.createdAt || "";
-
-  function settingsFingerprint(s) {
-    const c = { ...(s || {}) };
-    delete c.theme; delete c.lastBackupAt; // device-local / incidental
-    return JSON.stringify(c);
-  }
 
   /** Merge remote state into local: newest edit wins per record; tombstones delete. */
   function mergeStates(local, remote) {
@@ -183,14 +176,12 @@ const Sync = (() => {
     if (mob) { mob.hidden = !cfg.enabled; mob.textContent = icon || "☁️"; mob.title = message || text; }
   }
 
-  /* ---------- one pull-merge-push pass (throws on error; e.conflict = 409/422) ---------- */
+  /* ---------- one pull-merge-push pass (throws on error; e.conflict = 409/422) ----------
+     NOTE: settings ownership comes ONLY from real edits (Store.markSettingsChanged stamps
+     settingsUpdatedAt at save time). Never re-stamp here — a fingerprint heuristic used to
+     do that and it let a device with a stale sync bookmark claim ownership of settings it
+     hadn't touched, permanently out-voting genuine edits from the other device. */
   async function syncOnce() {
-    // stamp settings age so the merged winner is the device that actually changed them
-    const fp = settingsFingerprint(Store.state.settings);
-    if (cfg.lastSettingsFp && fp !== cfg.lastSettingsFp) {
-      Store.state.settingsUpdatedAt = U.nowISO();
-    }
-
     const tree = await getTree() || {};
     let remoteState = null;
     if (tree["data.json"]) {
@@ -239,7 +230,6 @@ const Sync = (() => {
     }
 
     cfg.lastSyncAt = U.nowISO();
-    cfg.lastSettingsFp = settingsFingerprint(Store.state.settings);
     saveCfg();
     return { pulledChanges, attMoved };
   }
@@ -315,7 +305,6 @@ const Sync = (() => {
     cfg.token = token;
     // this device's settings are the freshest at the moment sync is switched on
     Store.state.settingsUpdatedAt = Store.state.settingsUpdatedAt || U.nowISO();
-    cfg.lastSettingsFp = ""; // force a stamp check next pass
     saveCfg();
     setStatus("syncing");
     return sync({ manual: true });
