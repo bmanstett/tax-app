@@ -183,91 +183,113 @@ const Sync = (() => {
     if (mob) { mob.hidden = !cfg.enabled; mob.textContent = icon || "☁️"; mob.title = message || text; }
   }
 
-  /* ---------- the sync pass ---------- */
-  async function sync({ manual = false, attempt = 0 } = {}) {
+  /* ---------- one pull-merge-push pass (throws on error; e.conflict = 409/422) ---------- */
+  async function syncOnce() {
+    // stamp settings age so the merged winner is the device that actually changed them
+    const fp = settingsFingerprint(Store.state.settings);
+    if (cfg.lastSettingsFp && fp !== cfg.lastSettingsFp) {
+      Store.state.settingsUpdatedAt = U.nowISO();
+    }
+
+    const tree = await getTree() || {};
+    let remoteState = null;
+    if (tree["data.json"]) {
+      const parsed = JSON.parse(await getRaw("data.json"));
+      remoteState = parsed.data || parsed;
+    }
+
+    const local = Store.state;
+    const merged = remoteState ? mergeStates(local, remoteState) : U.clone(local);
+
+    // apply pulled changes locally
+    let pulledChanges = false;
+    if (JSON.stringify(merged) !== JSON.stringify(local)) {
+      applying = true;
+      try { Store.applySynced(merged); } finally { applying = false; }
+      pulledChanges = true;
+    }
+
+    // push if remote differs (data.json first — SHA conflict here just means re-merge & retry)
+    if (!remoteState || JSON.stringify(remoteState) !== JSON.stringify(Store.state)) {
+      const payload = JSON.stringify({
+        app: "Anstett Consulting — Books & Tax Organizer",
+        syncedAt: U.nowISO(),
+        schemaVersion: Store.state.schemaVersion,
+        data: Store.state,
+      });
+      await putFile("data.json", payload, tree["data.json"]);
+    }
+
+    // attachments: upload missing remote, download missing local, prune orphans
+    const needed = referencedAttachmentIds(Store.state);
+    const localIds = new Set(await Store.Attachments.listIds());
+    const remoteIds = new Set(Object.keys(tree).filter(p => p.startsWith("attachments/")).map(p => p.slice("attachments/".length, -".json".length)));
+    let attMoved = 0;
+    for (const id of needed) {
+      if (localIds.has(id) && !remoteIds.has(id)) {
+        const rec = await Store.Attachments.get(id);
+        if (rec) { await putFile(`attachments/${id}.json`, JSON.stringify(rec)); attMoved++; }
+      } else if (!localIds.has(id) && remoteIds.has(id)) {
+        const txt = await getRaw(`attachments/${id}.json`);
+        if (txt) { await Store.Attachments.put(JSON.parse(txt)); attMoved++; pulledChanges = true; }
+      }
+    }
+    for (const id of remoteIds) {
+      if (!needed.has(id)) await delFile(`attachments/${id}.json`, tree[`attachments/${id}.json`]);
+    }
+
+    cfg.lastSyncAt = U.nowISO();
+    cfg.lastSettingsFp = settingsFingerprint(Store.state.settings);
+    saveCfg();
+    return { pulledChanges, attMoved };
+  }
+
+  /* ---------- the sync pass (orchestration: one-at-a-time, resilient to conflicts) ---------- */
+  async function sync({ manual = false } = {}) {
     if (!cfg.enabled || !cfg.token || !cfg.repoFull) return { skipped: true };
     if (!navigator.onLine) { if (manual) UI.toast("You're offline — will sync when back online", "default"); return { skipped: true }; }
     if (running) { queued = true; return { queued: true }; }
     running = true;
     setStatus("syncing");
     try {
-      // stamp settings age so the merged winner is the device that actually changed them
-      const fp = settingsFingerprint(Store.state.settings);
-      if (cfg.lastSettingsFp && fp !== cfg.lastSettingsFp) {
-        Store.state.settingsUpdatedAt = U.nowISO();
-      }
-
-      const tree = await getTree() || {};
-      let remoteState = null;
-      if (tree["data.json"]) {
-        const parsed = JSON.parse(await getRaw("data.json"));
-        remoteState = parsed.data || parsed;
-      }
-
-      const local = Store.state;
-      const merged = remoteState ? mergeStates(local, remoteState) : U.clone(local);
-
-      // apply pulled changes locally
-      const localJson = JSON.stringify(local);
-      const mergedJson = JSON.stringify(merged);
-      let pulledChanges = false;
-      if (mergedJson !== localJson) {
-        applying = true;
-        try { Store.applySynced(merged); } finally { applying = false; }
-        pulledChanges = true;
-      }
-
-      // push if remote differs
-      if (!remoteState || JSON.stringify(remoteState) !== JSON.stringify(Store.state)) {
-        const payload = JSON.stringify({
-          app: "Anstett Consulting — Books & Tax Organizer",
-          syncedAt: U.nowISO(),
-          schemaVersion: Store.state.schemaVersion,
-          data: Store.state,
-        });
-        await putFile("data.json", payload, tree["data.json"]);
-      }
-
-      // attachments: upload missing remote, download missing local, prune orphans
-      const needed = referencedAttachmentIds(Store.state);
-      const localIds = new Set(await Store.Attachments.listIds());
-      const remoteIds = new Set(Object.keys(tree).filter(p => p.startsWith("attachments/")).map(p => p.slice("attachments/".length, -".json".length)));
-      let attMoved = 0;
-      for (const id of needed) {
-        if (localIds.has(id) && !remoteIds.has(id)) {
-          const rec = await Store.Attachments.get(id);
-          if (rec) { await putFile(`attachments/${id}.json`, JSON.stringify(rec)); attMoved++; }
-        } else if (!localIds.has(id) && remoteIds.has(id)) {
-          const txt = await getRaw(`attachments/${id}.json`);
-          if (txt) { await Store.Attachments.put(JSON.parse(txt)); attMoved++; pulledChanges = true; }
+      let res;
+      for (let attempt = 0; ; attempt++) {
+        try { res = await syncOnce(); break; }
+        catch (e) {
+          // 409/422 = another device pushed between our read and write. Re-merge & retry
+          // with exponential backoff + jitter so both devices don't collide again.
+          if (e.conflict && attempt < 5) {
+            await new Promise(r => setTimeout(r, 250 * Math.pow(2, attempt) + Math.random() * 500));
+            continue;
+          }
+          throw e;
         }
       }
-      // prune remote attachments no record references anymore (local orphans are
-      // left alone — deleting records already removes their file explicitly)
-      for (const id of remoteIds) {
-        if (!needed.has(id)) await delFile(`attachments/${id}.json`, tree[`attachments/${id}.json`]);
-      }
-
-      cfg.lastSyncAt = U.nowISO();
-      cfg.lastSettingsFp = settingsFingerprint(Store.state.settings);
-      saveCfg();
       setStatus("ok");
-      if (pulledChanges && window.App) App.rerender();
+      if (res.pulledChanges && window.App) App.rerender();
       if (manual) UI.toast("Sync complete ✓", "success");
-      return { ok: true, pulledChanges, attMoved };
+      return { ok: true, ...res };
     } catch (e) {
-      if (e.conflict && attempt < 2) {
-        running = false;
-        return sync({ manual, attempt: attempt + 1 }); // another device pushed mid-sync — re-pull and retry
+      if (e.conflict) {
+        // repo was busy this whole pass — not an error; the next scheduled sync resolves it
+        setStatus("ok");
+        scheduleSync(5000 + Math.random() * 4000);
+        return { deferred: true };
       }
       console.warn("Sync failed:", e);
-      const msg = /401|403/.test(e.message) ? "Sync token invalid or expired — update it in Settings" : "Sync failed: " + e.message;
-      setStatus("error", msg);
-      if (manual) UI.toast(msg, "error", 6000);
-      return { error: msg };
+      const authErr = /401|403/.test(e.message);
+      if (authErr) {
+        setStatus("error", "Sync paused — token invalid or expired");
+        UI.toast("Sync paused — your GitHub token is invalid or expired. Update it in Settings.", "error", 7000);
+      } else {
+        setStatus("error", "Sync will retry");
+        scheduleSync(9000 + Math.random() * 5000);
+        if (manual) UI.toast("Sync hiccup — retrying automatically", "default", 3000);
+      }
+      return { error: e.message };
     } finally {
       running = false;
-      if (queued) { queued = false; scheduleSync(1500); }
+      if (queued) { queued = false; scheduleSync(1200 + Math.random() * 800); }
     }
   }
 
@@ -312,15 +334,20 @@ const Sync = (() => {
     setStatus(cfg.enabled ? "ok" : "off");
     // wire triggers unconditionally — scheduleSync() is a no-op while disabled,
     // so enabling later in Settings starts syncing without a reload
-    Store.onSave(() => { if (!applying) scheduleSync(700); });   // push edits ~0.7s after a change
-    window.addEventListener("online", () => scheduleSync(400));
-    document.addEventListener("visibilitychange", () => {
-      // focus → pull the latest instantly; blur → push pending immediately. sync() does both.
+    Store.onSave(() => { if (!applying) scheduleSync(900); });   // push edits ~1s after a change (coalesces rapid edits)
+    window.addEventListener("online", () => scheduleSync(500));
+    let lastFocusSync = 0;
+    const focusSync = () => {
+      // pull the latest when the app comes forward — but debounce so focus+visibility
+      // (which both fire together) don't launch two syncs and collide.
+      if (Date.now() - lastFocusSync < 1500) return;
+      lastFocusSync = Date.now();
       clearTimeout(scheduleTimer); sync();
-    });
-    window.addEventListener("focus", () => { clearTimeout(scheduleTimer); sync(); });
-    // fast poll while the app is open/foreground; go quiet when hidden (battery/rate limits)
-    setInterval(() => { if (document.visibilityState !== "hidden") scheduleSync(0); }, 10 * 1000);
+    };
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") focusSync(); });
+    window.addEventListener("focus", focusSync);
+    // poll while foreground; jittered so two devices don't align. Quiet when hidden.
+    setInterval(() => { if (document.visibilityState !== "hidden") scheduleSync(Math.random() * 2500); }, 20 * 1000);
     const mob = document.getElementById("sync-mobile");
     if (mob) mob.addEventListener("click", () => sync({ manual: true }));
     if (cfg.enabled) scheduleSync(800);
