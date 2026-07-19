@@ -432,7 +432,7 @@ Views.workorders = {
       data: () => Store.all("workOrder"),
       searchText: w => [w.woNumber, w.projectNumber, Store.clientName(w.clientId), w.claimNumber, w.insuredName, w.lossLocation, w.jobType, w.insuranceCarrier].join(" "),
       filters: [
-        { id: "status", label: "Status", options: SCHEMA.workOrderStatuses.map(s => s.value), apply: (w, v) => w.status === v },
+        { id: "status", label: "Status", multi: true, options: SCHEMA.workOrderStatuses.map(s => s.value), apply: (w, v) => w.status === v },
         { id: "client", label: "Client", options: () => Store.all("client").map(c => ({ value: c.id, label: c.name })), apply: (w, v) => w.clientId === v },
         { id: "jobType", label: "Job Type", options: SCHEMA.jobTypes, apply: (w, v) => w.jobType === v },
         { id: "flag", label: "Alert", options: [

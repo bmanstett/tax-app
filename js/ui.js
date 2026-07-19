@@ -434,7 +434,7 @@ const UI = (() => {
    *   data: () => rows,
    *   columns: [{label, value(r) → text, html(r) → html, num, sortVal(r)}],
    *   searchText(r) → string,
-   *   filters: [{id, label, options: [{value,label}] | () => [...], apply(r, val) → bool}],
+   *   filters: [{id, label, options: [{value,label}] | () => [...], apply(r, val) → bool, multi: bool}],
    *   defaultSort: {col: index, dir: 1|-1},
    *   onRow(r), rowClass(r),
    *   card(r) → html (mobile),
@@ -443,7 +443,14 @@ const UI = (() => {
    * }
    */
   function listView(container, cfg) {
-    const stateLV = { q: "", filters: {}, sortCol: cfg.defaultSort ? cfg.defaultSort.col : 0, sortDir: cfg.defaultSort ? cfg.defaultSort.dir : -1 };
+    const stateLV = { q: "", filters: {}, openMulti: null, sortCol: cfg.defaultSort ? cfg.defaultSort.col : 0, sortDir: cfg.defaultSort ? cfg.defaultSort.dir : -1 };
+
+    // close any open multi-filter panel when tapping elsewhere; self-detaches once this view is gone
+    function onDocClick(e) {
+      if (!container.isConnected) { document.removeEventListener("click", onDocClick); return; }
+      if (stateLV.openMulti && !e.target.closest(".lv-multifilter")) { stateLV.openMulti = null; render(); }
+    }
+    document.addEventListener("click", onDocClick);
 
     function rows() {
       let rs = cfg.data();
@@ -453,7 +460,8 @@ const UI = (() => {
       }
       for (const f of cfg.filters || []) {
         const val = stateLV.filters[f.id];
-        if (val) rs = rs.filter(r => f.apply(r, val));
+        if (Array.isArray(val)) { if (val.length) rs = rs.filter(r => val.some(v => f.apply(r, v))); }
+        else if (val) rs = rs.filter(r => f.apply(r, val));
       }
       const col = cfg.columns[stateLV.sortCol];
       if (col) {
@@ -467,6 +475,23 @@ const UI = (() => {
       const rs = rows();
       const filterSelects = (cfg.filters || []).map(f => {
         const opts = typeof f.options === "function" ? f.options() : f.options;
+        if (f.multi) {
+          const sel = stateLV.filters[f.id] || [];
+          const optOf = v => opts.find(o => String(typeof o === "object" ? o.value : o) === v);
+          const lbOf = v => { const o = optOf(v); return o ? (typeof o === "object" ? o.label : o) : v; };
+          const label = sel.length === 0 ? `${f.label}: All` : sel.length === 1 ? `${f.label}: ${lbOf(sel[0])}` : `${f.label}: ${sel.length} selected`;
+          return `<div class="lv-multifilter">
+            <button type="button" class="lv-mf-btn${sel.length ? " active" : ""}" data-mf-toggle="${f.id}">${U.escapeHtml(label)}<span class="status-caret">▾</span></button>
+            ${stateLV.openMulti === f.id ? `<div class="lv-mf-panel">
+              <label class="lv-mf-opt"><input type="checkbox" data-mf-all="${f.id}" ${sel.length === 0 ? "checked" : ""}> All</label>
+              ${opts.map(o => {
+                const val = String(typeof o === "object" ? o.value : o);
+                const lb = typeof o === "object" ? o.label : o;
+                return `<label class="lv-mf-opt"><input type="checkbox" data-mf-id="${f.id}" data-mf-val="${U.escapeHtml(val)}" ${sel.includes(val) ? "checked" : ""}> ${U.escapeHtml(lb)}</label>`;
+              }).join("")}
+            </div>` : ""}
+          </div>`;
+        }
         return `<select data-filter="${f.id}">
           <option value="">${U.escapeHtml(f.label)}: All</option>
           ${opts.map(o => {
@@ -503,6 +528,22 @@ const UI = (() => {
       if (search) search.addEventListener("input", U.debounce(e => { stateLV.q = e.target.value; render(); restoreFocus(); }, 200));
       container.querySelectorAll("[data-filter]").forEach(sel => sel.addEventListener("change", e => {
         stateLV.filters[sel.getAttribute("data-filter")] = e.target.value; render();
+      }));
+      container.querySelectorAll("[data-mf-toggle]").forEach(btn => btn.addEventListener("click", () => {
+        const id = btn.getAttribute("data-mf-toggle");
+        stateLV.openMulti = stateLV.openMulti === id ? null : id;
+        render();
+      }));
+      container.querySelectorAll("[data-mf-id]").forEach(cb => cb.addEventListener("change", () => {
+        const id = cb.getAttribute("data-mf-id");
+        const cur = new Set(stateLV.filters[id] || []);
+        cb.checked ? cur.add(cb.getAttribute("data-mf-val")) : cur.delete(cb.getAttribute("data-mf-val"));
+        stateLV.filters[id] = [...cur];
+        render();
+      }));
+      container.querySelectorAll("[data-mf-all]").forEach(cb => cb.addEventListener("change", () => {
+        stateLV.filters[cb.getAttribute("data-mf-all")] = [];
+        render();
       }));
       container.querySelectorAll("th[data-col]").forEach(th => th.addEventListener("click", () => {
         const i = Number(th.getAttribute("data-col"));

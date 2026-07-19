@@ -266,6 +266,23 @@ table.data-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 .toolbar .search-box input { padding-left: 34px; }
 .toolbar .search-box::before { content: "🔍"; position: absolute; left: 11px; top: 50%; transform: translateY(-50%); font-size: 13px; opacity: .6; }
 .toolbar select { max-width: 190px; }
+.lv-multifilter { position: relative; flex: none; }
+.lv-mf-btn {
+  display: flex; align-items: center; gap: 6px; width: 100%; min-height: 40px;
+  padding: 9px 12px; border: 1px solid var(--border-strong); border-radius: 9px;
+  background: var(--bg-elev); color: var(--text); font: inherit; cursor: pointer;
+  transition: border-color .12s, box-shadow .12s;
+}
+.lv-mf-btn.active { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.lv-mf-panel {
+  position: absolute; top: calc(100% + 5px); left: 0; z-index: 60;
+  min-width: 200px; max-width: min(280px, calc(100vw - 32px)); max-height: 280px; overflow-y: auto;
+  background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: 10px;
+  box-shadow: var(--shadow-lg); padding: 5px;
+}
+.lv-mf-opt { display: flex; align-items: center; gap: 9px; padding: 9px 10px; border-radius: 7px; cursor: pointer; font-size: 13px; user-select: none; }
+.lv-mf-opt:hover { background: var(--bg-hover); }
+.lv-mf-opt input { accent-color: var(--accent); width: 16px; height: 16px; flex: none; margin: 0; }
 
 /* ===== Forms ===== */
 .field { margin-bottom: 13px; }
@@ -535,6 +552,7 @@ table.data-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 
   .toolbar .search-box { max-width: none; flex-basis: 100%; }
   .toolbar select { flex: 1; max-width: none; }
+  .toolbar .lv-multifilter { flex: 1; }
   .toast-root { bottom: calc(var(--bottomnav-h) + var(--safe-bottom) + 80px); }
   .invoice-doc { padding: 20px 16px; }
 }
