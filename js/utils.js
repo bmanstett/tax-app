@@ -16,6 +16,13 @@ const U = {
 
   nowISO() { return new Date().toISOString(); },
 
+  addDaysISO(iso, n) {
+    const d = U.parseDate(iso);
+    if (!d) return "";
+    d.setDate(d.getDate() + n);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  },
+
   /** Parse "YYYY-MM-DD" safely as a local date (avoids UTC off-by-one). */
   parseDate(iso) {
     if (!iso) return null;

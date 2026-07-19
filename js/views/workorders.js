@@ -90,10 +90,18 @@ const WO = (() => {
     if (!status || status === w.status) return;
     const patch = { status };
     const dateField = STATUS_DATE_STAMPS[status];
-    let stamped = false;
-    if (dateField && !w[dateField]) { patch[dateField] = U.todayISO(); stamped = true; }
+    const notes = [];
+    if (dateField && !w[dateField]) { patch[dateField] = U.todayISO(); notes.push("today's date stamped"); }
+    if (status === "Inspected" && !w.reportDueDate) {
+      patch.reportDueDate = U.addDaysISO(patch.inspectionDate || w.inspectionDate, 7);
+      if (patch.reportDueDate) notes.push(`report due ${U.fmtDateShort(patch.reportDueDate)}`);
+    }
+    if (status === "Submitted" && !w.invoiceDate) {
+      patch.invoiceDate = patch.reportSubmittedDate || w.reportSubmittedDate;
+      if (patch.invoiceDate) notes.push("invoice date = submit date");
+    }
     Store.update("workOrder", w.id, patch);
-    UI.toast(`${w.woNumber || "Work order"} → ${status}${stamped ? " · today's date stamped" : ""}`, "success");
+    UI.toast(`${w.woNumber || "Work order"} → ${status}${notes.length ? " · " + notes.join(" · ") : ""}`, "success");
     App.rerender();
     if (onDone) onDone(Store.get("workOrder", w.id));
   }
@@ -395,8 +403,7 @@ const WO = (() => {
           break;
         case "invoice": createInvoiceFrom(w, m); break;
         case "submitted":
-          Store.update("workOrder", w.id, { status: "Submitted", reportSubmittedDate: w.reportSubmittedDate || U.todayISO() });
-          UI.toast("Marked submitted — remember to invoice", "success"); m.close(); App.rerender(); break;
+          changeStatus(w, "Submitted", { onDone: () => m.close() }); break;
         case "paid":
           Store.update("workOrder", w.id, { status: "Paid", paymentDate: w.paymentDate || U.todayISO() });
           UI.toast("Marked paid", "success"); m.close(); App.rerender(); break;
