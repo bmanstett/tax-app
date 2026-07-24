@@ -483,11 +483,12 @@ const UI = (() => {
           return `<div class="lv-multifilter">
             <button type="button" class="lv-mf-btn${sel.length ? " active" : ""}" data-mf-toggle="${f.id}">${U.escapeHtml(label)}<span class="status-caret">▾</span></button>
             ${stateLV.openMulti === f.id ? `<div class="lv-mf-panel">
-              <label class="lv-mf-opt"><input type="checkbox" data-mf-all="${f.id}" ${sel.length === 0 ? "checked" : ""}> All</label>
+              <button type="button" class="lv-mf-chip${sel.length === 0 ? " selected" : ""}" data-mf-all="${f.id}" aria-pressed="${sel.length === 0}">All</button>
               ${opts.map(o => {
                 const val = String(typeof o === "object" ? o.value : o);
                 const lb = typeof o === "object" ? o.label : o;
-                return `<label class="lv-mf-opt"><input type="checkbox" data-mf-id="${f.id}" data-mf-val="${U.escapeHtml(val)}" ${sel.includes(val) ? "checked" : ""}> ${U.escapeHtml(lb)}</label>`;
+                const on = sel.includes(val);
+                return `<button type="button" class="lv-mf-chip${on ? " selected" : ""}" data-mf-id="${f.id}" data-mf-val="${U.escapeHtml(val)}" aria-pressed="${on}">${U.escapeHtml(lb)}</button>`;
               }).join("")}
             </div>` : ""}
           </div>`;
@@ -534,15 +535,16 @@ const UI = (() => {
         stateLV.openMulti = stateLV.openMulti === id ? null : id;
         render();
       }));
-      container.querySelectorAll("[data-mf-id]").forEach(cb => cb.addEventListener("change", () => {
-        const id = cb.getAttribute("data-mf-id");
+      container.querySelectorAll("[data-mf-id]").forEach(btn => btn.addEventListener("click", () => {
+        const id = btn.getAttribute("data-mf-id");
+        const val = btn.getAttribute("data-mf-val");
         const cur = new Set(stateLV.filters[id] || []);
-        cb.checked ? cur.add(cb.getAttribute("data-mf-val")) : cur.delete(cb.getAttribute("data-mf-val"));
+        cur.has(val) ? cur.delete(val) : cur.add(val);
         stateLV.filters[id] = [...cur];
         render();
       }));
-      container.querySelectorAll("[data-mf-all]").forEach(cb => cb.addEventListener("change", () => {
-        stateLV.filters[cb.getAttribute("data-mf-all")] = [];
+      container.querySelectorAll("[data-mf-all]").forEach(btn => btn.addEventListener("click", () => {
+        stateLV.filters[btn.getAttribute("data-mf-all")] = [];
         render();
       }));
       container.querySelectorAll("th[data-col]").forEach(th => th.addEventListener("click", () => {

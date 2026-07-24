@@ -276,13 +276,23 @@ table.data-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 .lv-mf-btn.active { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .lv-mf-panel {
   position: absolute; top: calc(100% + 5px); left: 0; z-index: 60;
-  min-width: 200px; max-width: min(280px, calc(100vw - 32px)); max-height: 280px; overflow-y: auto;
+  display: flex; flex-wrap: wrap; gap: 7px;
+  min-width: 220px; max-width: min(340px, calc(100vw - 32px)); max-height: 300px; overflow-y: auto;
   background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: 10px;
-  box-shadow: var(--shadow-lg); padding: 5px;
+  box-shadow: var(--shadow-lg); padding: 10px;
 }
-.lv-mf-opt { display: flex; align-items: center; gap: 9px; padding: 9px 10px; border-radius: 7px; cursor: pointer; font-size: 13px; user-select: none; }
-.lv-mf-opt:hover { background: var(--bg-hover); }
-.lv-mf-opt input { accent-color: var(--accent); width: 16px; height: 16px; flex: none; margin: 0; }
+.lv-mf-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 7px 13px; border: 1.5px solid var(--border-strong); border-radius: 999px;
+  background: var(--bg-elev); color: var(--text-2); font: inherit; font-size: 13px; line-height: 1;
+  cursor: pointer; user-select: none; white-space: nowrap;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.lv-mf-chip:hover { border-color: var(--accent); color: var(--text); }
+.lv-mf-chip.selected {
+  background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600;
+}
+.lv-mf-chip.selected::before { content: "✓"; font-size: 12px; }
 
 /* ===== Forms ===== */
 .field { margin-bottom: 13px; }
