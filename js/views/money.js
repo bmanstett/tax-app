@@ -129,9 +129,15 @@ Views.income = {
     el.querySelector("#inc-add").addEventListener("click", () => Income.openEditor(null));
     el.querySelector("#inc-1099").addEventListener("click", () => Income.open1099Tool());
 
+    // WO # for an income row — direct link, else via the linked invoice's work order
+    const woNumFor = r => {
+      const woId = r.workOrderId || (Store.get("invoice", r.invoiceId) || {}).workOrderId;
+      return woId ? Store.woLabel(woId) : "";
+    };
+
     UI.listView(el.querySelector("#inc-list"), {
       data: () => Store.all("income"),
-      searchText: i => [Store.clientName(i.clientId), i.sourceOther, i.category, i.serviceType, i.notes, Store.invLabel(i.invoiceId)].join(" "),
+      searchText: i => [Store.clientName(i.clientId), i.sourceOther, i.category, i.serviceType, i.notes, Store.invLabel(i.invoiceId), woNumFor(i)].join(" "),
       filters: [
         { id: "yr", label: "Year", options: App.yearsWithData(), apply: (r, v) => U.yearOf(r.date) === Number(v) },
         { id: "client", label: "Client", options: () => Store.all("client").map(c => ({ value: c.id, label: c.name })), apply: (r, v) => r.clientId === v },
@@ -143,19 +149,23 @@ Views.income = {
         { label: "Client / source", value: r => Store.clientName(r.clientId) || r.sourceOther || "—" },
         { label: "Category", value: r => r.category || "—" },
         { label: "Invoice", value: r => Store.invLabel(r.invoiceId) || "—" },
+        { label: "Work order", value: r => woNumFor(r) || "—" },
         { label: "Method", value: r => r.paymentMethod || "—" },
         { label: "Flags", html: r => [r.is1099 ? UI.badge("1099", "blue") : "", r.cpaReview ? UI.badge("CPA", "amber") : ""].join(" ") },
       ],
       defaultSort: { col: 0, dir: -1 },
       onRow: r => Income.openEditor(r),
-      card: r => `<div class="record-card">
+      card: r => {
+        const wo = woNumFor(r);
+        return `<div class="record-card">
         <div class="record-card-top">
           <div class="record-card-title">${U.escapeHtml(Store.clientName(r.clientId) || r.sourceOther || "Income")}</div>
           <div class="record-card-amount" style="color:var(--green)">${U.money(r.amount)}</div>
         </div>
         <div class="record-card-sub">${U.fmtDate(r.date)} · ${U.escapeHtml(r.category || "")}</div>
-        <div class="record-card-meta">${r.is1099 ? UI.badge("1099", "blue") : ""}${r.invoiceId ? UI.badge(Store.invLabel(r.invoiceId), "slate") : ""}${r.cpaReview ? UI.badge("CPA review", "amber") : ""}</div>
-      </div>`,
+        <div class="record-card-meta">${r.is1099 ? UI.badge("1099", "blue") : ""}${r.invoiceId ? UI.badge(Store.invLabel(r.invoiceId), "slate") : ""}${wo ? UI.badge("📋 " + wo, "teal") : ""}${r.cpaReview ? UI.badge("CPA review", "amber") : ""}</div>
+      </div>`;
+      },
       empty: { icon: "💵", title: "No income logged", sub: "Log payments here — they reconcile against invoices and 1099s.", actionLabel: "＋ Log Income", actionId: "inc-empty-add", onAction: () => Income.openEditor(null) },
     });
   },
