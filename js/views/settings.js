@@ -142,7 +142,8 @@ Views.settings = {
             <div class="card-title">🩺 Data health</div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
               <button class="btn" id="st-integrity">Run integrity check</button>
-              <button class="btn" id="st-dupes">Find duplicates</button>
+              <button class="btn" id="st-dupes">Review duplicates</button>
+              <button class="btn" id="st-fix-paid">Complete paid-invoice payment info</button>
               <button class="btn" id="st-fix-incdates">Sync income dates to invoice payments</button>
             </div>
             <div class="hint" style="font-size:11.5px;color:var(--text-3);margin-bottom:8px">“Sync income dates” re-dates each invoice-linked income entry to that invoice’s <strong>payment date</strong>, so the monthly income / net-profit charts land in the month the invoice was actually paid. (Set the payment date on each invoice first.)</div>
@@ -340,11 +341,19 @@ Views.settings = {
     });
     g("#st-dupes").addEventListener("click", () => {
       const dupes = Store.findDuplicates();
-      g("#st-health-out").innerHTML = dupes.length
-        ? `<div style="font-size:12.5px;font-weight:700;color:var(--amber);margin-bottom:5px">${dupes.length} possible duplicate(s):</div>` +
-          dupes.map(x => `<div style="font-size:12.5px;color:var(--text-2);padding:3px 0;border-bottom:1px dashed var(--border)">• ${U.escapeHtml(x.label)}</div>`).join("") +
-          `<div class="hint" style="font-size:11.5px;color:var(--text-3);margin-top:6px">Review each pair and delete the extra if it's a true duplicate.</div>`
-        : `<div style="font-size:13px;color:var(--green);font-weight:700">✓ No duplicates detected.</div>`;
+      if (!dupes.length) {
+        g("#st-health-out").innerHTML = `<div style="font-size:13px;color:var(--green);font-weight:700">✓ No duplicates detected.</div>`;
+        return;
+      }
+      g("#st-health-out").innerHTML = `<div style="font-size:12.5px;color:var(--text-2)">${dupes.length} possible duplicate pair(s) — reviewing them now.</div>`;
+      DataHealth.openDuplicates();
+    });
+    g("#st-fix-paid").addEventListener("click", () => {
+      const n = Invoices.needingPaymentInfo().length;
+      g("#st-health-out").innerHTML = n
+        ? `<div style="font-size:12.5px;color:var(--text-2)">${n} paid invoice(s) missing payment date or method — completing them now.</div>`
+        : `<div style="font-size:13px;color:var(--green);font-weight:700">✓ Every paid invoice has a payment date and method.</div>`;
+      if (n) DataHealth.openPaymentInfoFix();
     });
 
     /* ---- demo / reset ---- */

@@ -101,6 +101,13 @@ const WO = (() => {
       if (patch.invoiceDate) notes.push("invoice date = submit date");
     }
     Store.update("workOrder", w.id, patch);
+    // a paid/closed job settles its invoice too: fill any blank payment date or method
+    if (["Paid", "Closed"].includes(status)) {
+      const filled = Store.state.invoices
+        .filter(i => i.workOrderId === w.id && i.status === "Paid" && Object.keys(Invoices.paymentDefaults(i)).length)
+        .map(i => Invoices.applyPaymentDefaults(i));
+      if (filled.length) notes.push("invoice payment info filled in");
+    }
     UI.toast(`${w.woNumber || "Work order"} → ${status}${notes.length ? " · " + notes.join(" · ") : ""}`, "success");
     App.rerender();
     if (onDone) onDone(Store.get("workOrder", w.id));
@@ -405,8 +412,7 @@ const WO = (() => {
         case "submitted":
           changeStatus(w, "Submitted", { onDone: () => m.close() }); break;
         case "paid":
-          Store.update("workOrder", w.id, { status: "Paid", paymentDate: w.paymentDate || U.todayISO() });
-          UI.toast("Marked paid", "success"); m.close(); App.rerender(); break;
+          changeStatus(w, "Paid", { onDone: () => m.close() }); break;
         case "duplicate": m.close(); duplicate(w); break;
         case "export": exportSummary(w); break;
       }

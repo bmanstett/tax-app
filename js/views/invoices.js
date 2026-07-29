@@ -8,6 +8,77 @@ window.Views = window.Views || {};
 
 const Invoices = (() => {
 
+  /* ---- payment defaults ----------------------------------------------
+     A paid invoice with no payment date/method is a reconciliation gap.
+     Rather than leave it blank, fall back to the date the invoice (or its
+     work order) was actually marked paid — read out of the audit trail —
+     and to the way payments normally arrive. Both stay editable. */
+  const DEFAULT_PAYMENT_METHOD = "ACH / Direct Deposit";
+
+  /** Best-evidence payment date for an invoice, with the reason, most reliable first.
+      A linked income entry outranks the audit trail: it's your own record of the day
+      the money landed, and using it means filling this blank never re-dates income
+      into another month (or tax year). */
+  function paymentDateGuess(inv) {
+    const w = inv.workOrderId ? Store.get("workOrder", inv.workOrderId) : null;
+    const income = Store.state.income.filter(i => i.invoiceId === inv.id && i.date);
+    const candidates = [
+      [income.length ? U.sortBy(income, i => i.date)[0].date : null, "linked income entry"],
+      [Store.statusChangedAt("invoice", inv.id, "Paid"), "date the invoice was marked paid"],
+      [w && Store.statusChangedAt("workOrder", w.id, "Paid"), "date the work order was marked paid"],
+      [w && Store.statusChangedAt("workOrder", w.id, "Closed"), "date the work order was closed"],
+      [w && w.paymentDate, "work order payment date"],
+      [U.localDateOf(inv.createdAt), "invoice created"],
+      [inv.invoiceDate, "invoice date"],
+    ];
+    const hit = candidates.find(c => c[0]);
+    return hit ? { date: String(hit[0]).slice(0, 10), source: hit[1] } : { date: "", source: "" };
+  }
+
+  /** The blanks to fill on a paid invoice — {} when there's nothing to fix. */
+  function paymentDefaults(inv) {
+    if (!inv || inv.status !== "Paid") return {};
+    const patch = {};
+    if (!inv.paymentMethod) patch.paymentMethod = DEFAULT_PAYMENT_METHOD;
+    if (!inv.paymentDate) {
+      const g = paymentDateGuess(inv);
+      if (g.date) patch.paymentDate = g.date;
+    }
+    return patch;
+  }
+
+  /** Fill those blanks in and keep linked income dated to match. Returns the saved invoice. */
+  function applyPaymentDefaults(inv, overrides = {}) {
+    const patch = { ...paymentDefaults(inv), ...overrides };
+    if (!Object.keys(patch).length) return inv;
+    const saved = Store.update("invoice", inv.id, patch);
+    if (saved) syncIncomeDates(saved);
+    return saved || inv;
+  }
+
+  /** Paid invoices still missing a payment date or method. */
+  function needingPaymentInfo() {
+    return Store.state.invoices.filter(i => i.status === "Paid" && (!i.paymentDate || !i.paymentMethod));
+  }
+
+  /** Fill every gap at once — runs at startup, so invoices entered before these
+      defaults existed get cleaned up without anyone having to tap anything.
+      A no-op once every paid invoice has a date and a method. Each fill lands in
+      the audit trail, and the work order's own payment date is stamped to match. */
+  function backfillPaymentInfo() {
+    const fixed = [];
+    for (const inv of needingPaymentInfo()) {
+      if (!Object.keys(paymentDefaults(inv)).length) continue;
+      const saved = applyPaymentDefaults(inv);
+      if (!saved || (!saved.paymentDate && !saved.paymentMethod)) continue;
+      fixed.push(saved);
+      const w = saved.workOrderId ? Store.get("workOrder", saved.workOrderId) : null;
+      if (w && !w.paymentDate && ["Paid", "Closed"].includes(w.status))
+        Store.update("workOrder", w.id, { paymentDate: saved.paymentDate });
+    }
+    return fixed;
+  }
+
   /** Cascade invoice status to the linked work order:
       Sent → WO "Invoiced" · Paid → WO "Closed" (dates stamped). */
   function syncWorkOrder(inv) {
@@ -32,6 +103,11 @@ const Invoices = (() => {
         const paid = Number(vals.amountPaid) || 0;
         if (paid > 0.005 && paid < tot - 0.005 && ["Draft", "Sent", "Paid"].includes(vals.status)) vals.status = "Partial";
         if (tot > 0 && paid >= tot - 0.005 && vals.status !== "Written Off") vals.status = "Paid";
+        // paid today unless the form says otherwise, and ACH unless a method was picked
+        if (vals.status === "Paid") {
+          if (!vals.paymentDate) vals.paymentDate = (rec && rec.status === "Paid" ? paymentDateGuess({ ...rec, ...vals }).date : "") || U.todayISO();
+          if (!vals.paymentMethod) vals.paymentMethod = DEFAULT_PAYMENT_METHOD;
+        }
         const saved = rec ? Store.update("invoice", rec.id, vals) : Store.add("invoice", vals);
         if (saved) { syncWorkOrder(saved); syncIncomeDates(saved); }
         // reconcile: if just marked paid, offer to log income (incl. any bonus)
@@ -125,7 +201,8 @@ const Invoices = (() => {
     const patch = { status };
     if (status === "Paid") {
       patch.amountPaid = Store.invoiceTotal(inv);
-      patch.paymentDate = inv.paymentDate || U.todayISO();
+      patch.paymentDate = inv.paymentDate || U.todayISO();   // today = the day it was marked paid
+      patch.paymentMethod = inv.paymentMethod || DEFAULT_PAYMENT_METHOD;
     }
     const saved = Store.update("invoice", inv.id, patch);
     if (saved) { syncWorkOrder(saved); syncIncomeDates(saved); }
@@ -259,7 +336,8 @@ const Invoices = (() => {
     });
   }
 
-  return { openEditor, openDetail, preview, markStatus, agingBucket, syncWorkOrder, verifiedBadge, offerBonusIncome, syncIncomeDates };
+  return { openEditor, openDetail, preview, markStatus, agingBucket, syncWorkOrder, verifiedBadge, offerBonusIncome, syncIncomeDates,
+    paymentDateGuess, paymentDefaults, applyPaymentDefaults, needingPaymentInfo, backfillPaymentInfo, DEFAULT_PAYMENT_METHOD };
 })();
 
 Views.invoices = {

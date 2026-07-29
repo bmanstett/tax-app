@@ -111,9 +111,9 @@ const Alerts = (() => {
       items: S.invoices.filter(i => ["Sent", "Partial"].includes(i.status) && Store.invoiceBalance(i) > 0.005 && !Store.invoiceIsOverdue(i)),
     });
     push({
-      id: "inv-paid-missing-info", icon: "❓", route: "invoices", severity: "warn", weight: 1,
+      id: "inv-paid-missing-info", icon: "❓", route: "invoices", action: "paid-missing-info", severity: "warn", weight: 1,
       title: "Invoices marked paid but missing payment date or method",
-      sub: "Complete the payment record for clean reconciliation",
+      sub: "Tap to fill in the date each was marked paid — review and apply",
       items: S.invoices.filter(i => i.status === "Paid" && (!i.paymentDate || !i.paymentMethod)),
     });
 
@@ -183,9 +183,9 @@ const Alerts = (() => {
 
     /* --- Data hygiene --- */
     push({
-      id: "dupes", icon: "👯", route: "settings", severity: "warn", weight: 1,
+      id: "dupes", icon: "👯", route: "settings", action: "duplicates", severity: "warn", weight: 1,
       title: "Possible duplicate records",
-      sub: "Same date/vendor/amount — verify and delete extras",
+      sub: "Tap to compare each pair side by side and delete the extra",
       items: Store.findDuplicates(),
     });
     push({
@@ -253,7 +253,7 @@ const Alerts = (() => {
       const per = c.severity === "bad" ? 4 : c.severity === "warn" ? 2.5 : 1.5;
       const p = Math.min(c.count * per * (c.weight || 1), 24);
       penalty += p;
-      detail.push({ id: c.id, title: c.title, count: c.count, penalty: U.round2(p), severity: c.severity, route: c.route });
+      detail.push({ id: c.id, title: c.title, count: c.count, penalty: U.round2(p), severity: c.severity, route: c.route, action: c.action });
     }
     // With almost no data, a perfect score is misleading — floor it informatively
     let score = Math.max(0, Math.round(100 - penalty));

@@ -64,6 +64,7 @@ const Store = (() => {
       form1099s: [],          // {id, clientId, taxYear, expected, received, amountReceived, notes}
       yearChecklists: {},     // { "2026": { itemKey: true } }
       lockedYears: [],        // [2025]
+      dupeIgnores: [],        // duplicate pairs reviewed and kept ("id1~id2")
       tombstones: [],         // {id, type, at} — deleted records, so deletions sync across devices
       settingsUpdatedAt: null,// stamped by Sync when settings change, so newest settings win
       auditLog: [],           // {id, at, action, recordType, recordId, recordLabel, changes:[{field,from,to}]}
@@ -279,15 +280,29 @@ const Store = (() => {
   }
 
   /* ---------- duplicate detection ---------- */
-  function findDuplicates() {
+
+  /** Stable id for a duplicate pair — record ids sorted, so "keep both"
+      survives reloads and syncs to the other devices. */
+  function dupeKey(ids) { return [...ids].sort().join("~"); }
+
+  /** Pairs of records that look like the same thing entered twice.
+      Each: {type, key, ids:[a,b], records:[a,b], label, ignored}.
+      Pairs the user marked "keep both" are filtered out unless asked for. */
+  function findDuplicates({ includeIgnored = false } = {}) {
     const dupes = [];
+    const ignored = new Set(state.dupeIgnores || []);
     const key = (parts) => parts.join("|").toLowerCase();
     const check = (type, list, keyFn, describe) => {
       const seen = {};
       for (const r of list) {
         const k = keyFn(r);
         if (!k) continue;
-        if (seen[k]) dupes.push({ type, ids: [seen[k].id, r.id], label: describe(r) });
+        if (seen[k]) {
+          const ids = [seen[k].id, r.id];
+          const pairKey = dupeKey(ids);
+          if (includeIgnored || !ignored.has(pairKey))
+            dupes.push({ type, key: pairKey, ids, records: [seen[k], r], label: describe(r), ignored: ignored.has(pairKey) });
+        }
         else seen[k] = r;
       }
     };
@@ -302,6 +317,25 @@ const Store = (() => {
     check("workOrder", state.workOrders, r => r.woNumber ? key([r.woNumber]) : null,
       r => `Work Order #: ${r.woNumber} (duplicate number)`);
     return dupes;
+  }
+
+  /** "Keep both" / undo for a duplicate pair. Keys of pairs whose records are
+      gone are pruned so the list can't grow forever. */
+  function setDuplicateIgnored(pairKey, on = true) {
+    const live = new Set([...state.expenses, ...state.income, ...state.mileage, ...state.invoices, ...state.workOrders].map(r => r.id));
+    const keep = (state.dupeIgnores || []).filter(k => k !== pairKey && k.split("~").every(id => live.has(id)));
+    state.dupeIgnores = on ? [...keep, pairKey] : keep;
+    save();
+  }
+
+  /** Date (YYYY-MM-DD, local) a record's status was last changed to `status`,
+      read back out of the audit trail. Null when the trail doesn't show it —
+      e.g. the record was created with that status already set. */
+  function statusChangedAt(type, id, status) {
+    const hit = (state.auditLog || []).find(a =>            // audit log is newest-first
+      a.recordType === type && a.recordId === id &&
+      (a.changes || []).some(c => c.field === "status" && c.to === status));
+    return hit ? U.localDateOf(hit.at) : null;
   }
 
   /* ---------- integrity check ---------- */
@@ -503,7 +537,7 @@ const Store = (() => {
     invoiceTotal, invoiceBalance, invoiceIsOverdue,
     mileageRate, tripDeduction, expenseDeductibleAmt,
     yearData, taxSummary,
-    findDuplicates, integrityCheck,
+    findDuplicates, setDuplicateIgnored, statusChangedAt, integrityCheck,
     exportJSON, importJSON, validateImport, resetAll, applySynced,
     isYearLocked, backupDue, markBackedUp, markSettingsChanged,
     logAudit, labelFor,

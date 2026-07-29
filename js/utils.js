@@ -9,8 +9,14 @@ const U = {
     return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   },
 
-  todayISO() {
-    const d = new Date();
+  todayISO() { return U.localDateOf(new Date()); },
+
+  /** Calendar date (YYYY-MM-DD) of a timestamp in *local* time — an ISO
+      timestamp sliced to 10 chars is UTC, which lands on the wrong day
+      for anything logged in the evening. */
+  localDateOf(ts) {
+    const d = ts ? new Date(ts) : new Date();
+    if (isNaN(d.getTime())) return "";
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   },
 

@@ -83,6 +83,16 @@ const App = (() => {
 
   function rerender() { render(); }
 
+  /** Housekeeping that should hold true no matter how records got here — typed in,
+      imported, or pulled from another device. Safe to run repeatedly. */
+  function tidyData({ announce = false } = {}) {
+    const fixed = Invoices.backfillPaymentInfo();
+    if (fixed.length && announce) {
+      UI.toast(`Filled in the payment date and method on ${fixed.length} paid invoice${fixed.length > 1 ? "s" : ""} — see Settings → Data health`, "success", 6000);
+    }
+    return fixed;
+  }
+
   /* ---------- navigation chrome ---------- */
   function refreshNav() {
     const attentionCount = Alerts.attention(viewYear()).reduce((t, a) => t + (a.severity !== "info" ? a.count : 0), 0);
@@ -214,6 +224,9 @@ const App = (() => {
 
     render();
 
+    // complete any paid invoice still missing its payment date/method
+    setTimeout(() => { if (tidyData({ announce: true }).length) render(); }, 600);
+
     // first-run experience
     const hasData = Store.state.workOrders.length || Store.state.expenses.length || Store.state.income.length || Store.state.clients.length;
     if (!hasData && !Store.state.demoDataLoaded && !localStorage.getItem("anstett_welcomed")) {
@@ -226,5 +239,5 @@ const App = (() => {
 
   document.addEventListener("DOMContentLoaded", init);
 
-  return { go, rerender, render, viewYear, yearsWithData, yearPickerHtml, refreshNav, quickAdd };
+  return { go, rerender, render, viewYear, yearsWithData, yearPickerHtml, refreshNav, quickAdd, tidyData };
 })();

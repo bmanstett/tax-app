@@ -65,10 +65,10 @@ Clear it anytime: **Settings → Clear ALL data**, then start fresh.
 
 | Section | What it does |
 |---|---|
-| **Dashboard** | YTD income/expenses/net, **pending fees from work orders not yet invoiced**, tax reserve estimates, invoice aging, readiness scores, "what needs attention" |
+| **Dashboard** | YTD income/expenses/net, **pending fees from work orders not yet invoiced**, tax reserve estimates, invoice aging, readiness scores, "what needs attention" — every item is tappable and lands where the fix is, including **side-by-side duplicate review** (compare both copies, delete the extra, or keep both) and **one-tap payment-record completion** for invoices marked paid without a date/method |
 | **Work Orders** | Full forensic-engineering job tracker (claim/policy/CAT, insured, loss location, scope, fees, remittance) with **one-tap status changes** (tap the status badge in the list, or the status pipeline in the job detail — dates like report-submitted/invoice/payment are stamped automatically), due-date alerts, quick actions (add mileage/expense/receipt, create invoice, duplicate, export summary), **mileage reimbursable per-mile or as a flat fee** (flows into invoices automatically), and **hands-free status flow** — marking an invoice Sent moves the job to Invoiced; a paid invoice or matching income entry closes it — plus **📄 Import FCGA PDF**: drop an FCGA "Engineer Work Order Form" PDF and every field is parsed into a pre-filled work order (see below) |
 | **Clients** | Rates, terms, W-9/1099 flags, profitability, average payment time, 1099 reconciliation status |
-| **Invoices** | Flat/hourly billing + mileage & expense reimbursements, aging, partial payments, printable invoice, income reconciliation |
+| **Invoices** | Flat/hourly billing + mileage & expense reimbursements, aging, partial payments, printable invoice, income reconciliation. Marking one paid (or closing its work order) fills the **payment date with that day and the method with ACH / Direct Deposit** unless you set them yourself |
 | **Income** | All money in, 1099 tracking, and the **1099 Reconciliation tool** (compare 1099s received vs. recorded income) |
 | **Expenses** | Schedule C-style categories, business purpose, **receipt upload right on the expense form** (📷 Take photo / 📁 Choose file with preview) plus **one-tap 📎 Attach on every expense row/card** — no need to open the form; attached receipts open in a viewer from the list; business-use %, reimbursable tracking, CPA-review flags |
 | **Mileage** | Field-optimized **⚡ Quick trip** logging, odometer support, per-year IRS rate, substantiation score, CSV log export |
@@ -79,7 +79,7 @@ Clear it anytime: **Settings → Clear ALL data**, then start fresh.
 | **Taxes** | Quarterly estimated payment tracker with due dates, configurable reserve percentages, year-end checklist, **year lock** |
 | **Reports** | 20+ printable reports incl. the **CPA Year-End Packet** and **IRS Audit-Readiness Packet** (Print → Save as PDF) |
 | **Audit Trail** | Field-level before/after history of every create/edit/delete |
-| **Settings** | Business profile, tax assumptions, mileage rates by year, JSON backup/restore, integrity check, duplicate finder |
+| **Settings** | Business profile, tax assumptions, mileage rates by year, JSON backup/restore, integrity check, duplicate review, paid-invoice payment-info completion |
 
 ## FCGA work order import
 

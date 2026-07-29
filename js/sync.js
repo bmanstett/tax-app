@@ -147,6 +147,8 @@ const Sync = (() => {
       merged.yearChecklists[y] = { ...(obj || {}), ...(merged.yearChecklists[y] || {}) };
     }
     merged.lockedYears = [...new Set([...(local.lockedYears || []), ...(remote.lockedYears || [])])].sort();
+    // duplicate pairs dismissed as "keep both" — union, so reviewing on one device settles it everywhere
+    merged.dupeIgnores = [...new Set([...(local.dupeIgnores || []), ...(remote.dupeIgnores || [])])];
     merged.demoDataLoaded = !!(local.demoDataLoaded || remote.demoDataLoaded);
     return merged;
   }
@@ -256,7 +258,8 @@ const Sync = (() => {
         }
       }
       setStatus("ok");
-      if (res.pulledChanges && window.App) App.rerender();
+      // records pulled from another device may predate the payment defaults — tidy them too
+      if (res.pulledChanges && window.App) { App.tidyData(); App.rerender(); }
       if (manual) UI.toast("Sync complete ✓", "success");
       return { ok: true, ...res };
     } catch (e) {

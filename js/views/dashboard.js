@@ -140,7 +140,7 @@ Views.dashboard = {
             <div class="card-title">🚨 What needs attention</div>
             <div class="card-sub">Most important first — tap to jump there</div>
             ${attention.length ? attention.slice(0, 9).map(a => `
-              <div class="attention-item sev-${a.severity}" data-route="${a.route}">
+              <div class="attention-item sev-${a.severity}" ${a.action ? `data-action="${a.action}"` : `data-route="${a.route}"`}>
                 <div class="attention-icon">${a.icon}</div>
                 <div class="attention-text">
                   <div class="attention-title">${U.escapeHtml(a.title)}</div>
@@ -161,7 +161,7 @@ Views.dashboard = {
             </div>
             <div style="margin-top:10px">
               ${[...cpa.detail, ...audit.detail].filter((x, i, arr) => arr.findIndex(y => y.id === x.id) === i).slice(0, 6).map(x => `
-                <div class="score-line" data-route="${x.route}" style="cursor:pointer">
+                <div class="score-line" ${x.action ? `data-action="${x.action}"` : `data-route="${x.route}"`} style="cursor:pointer">
                   <span>${U.escapeHtml(U.truncate(x.title, 46))}</span><span class="${x.severity === "bad" ? "bad" : "warn"}">−${x.penalty}</span>
                 </div>`).join("") || `<div class="score-line"><span>No deductions — well documented</span><span class="ok">✓</span></div>`}
             </div>
@@ -199,6 +199,8 @@ Views.dashboard = {
     `;
 
     el.querySelectorAll("[data-route]").forEach(x => x.addEventListener("click", () => App.go(x.getAttribute("data-route"))));
+    // some attention items open a review screen instead of just jumping to a page
+    el.querySelectorAll("[data-action]").forEach(x => x.addEventListener("click", () => DataHealth.run(x.getAttribute("data-action"))));
     Charts.bindTooltips(el);
   },
 };
