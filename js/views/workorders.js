@@ -62,6 +62,17 @@ const WO = (() => {
     return { income, invoiced, costs: U.round2(costs + miCost), profit, ehr: hrs ? U.round2(profit / hrs) : null, miles: U.sum(L.mileage, m => m.miles) };
   }
 
+  /** How this job's income is sourced between states (shape matches Store.incomeStateSource). */
+  function stateSource(w) {
+    return {
+      workState: String(w.workState || "").toUpperCase(),
+      officeState: String(w.officeState || Store.state.settings.officeState || "").toUpperCase(),
+      pct: w.fieldWorkPct,
+    };
+  }
+  /** "MD 50% / VA 50%" for display; "—" when nothing is set yet. */
+  const stateSplitText = w => SCHEMA.describeSplit(stateSource(w));
+
   function feeText(w) {
     if (w.feeType === "Hourly") return `${U.money(w.hourlyRate)}/hr`;
     if (w.feeType === "T&E") return "T&E";
@@ -242,6 +253,7 @@ const WO = (() => {
       `Client: ${Store.clientName(w.clientId)}    Carrier: ${w.insuranceCarrier || ""}`,
       `Claim #: ${w.claimNumber || ""}    Policy #: ${w.policyNumber || ""}    CAT: ${w.catNumber || ""}`,
       `Insured: ${w.insuredName || ""}    Loss location: ${(w.lossLocation || "").replace(/\n/g, ", ")}`,
+      `State sourcing of income: ${stateSplitText(w)}`,
       `Job type: ${w.jobType || ""} / ${w.residentialCommercial || ""}    Date of loss: ${U.fmtDate(w.dateOfLoss)}`,
       `Assigned: ${U.fmtDate(w.dateAssigned)}  Inspected: ${U.fmtDate(w.inspectionDate)}  Report due: ${U.fmtDate(w.reportDueDate)}  Submitted: ${U.fmtDate(w.reportSubmittedDate)}`,
       `Fee: ${w.feeType || ""} ${feeText(w)}    Hours (est/actual): ${w.estimatedHours || "—"}/${w.actualHours || "—"}`,
@@ -330,6 +342,14 @@ const WO = (() => {
           ["Phone", val(w.insuredPhone)],
           ["Email", val(w.insuredEmail)],
           ["Loss location", multiline(w.lossLocation)],
+          ["Work performed in", (() => {
+            const src = stateSource(w);
+            if (!src.workState && !src.officeState) return "";
+            const txt = U.escapeHtml(stateSplitText(w));
+            return src.workState && src.officeState && src.workState !== src.officeState
+              ? `${txt}<div style="font-size:11px;color:var(--text-3)">${U.escapeHtml(src.workState)} inspection · ${U.escapeHtml(src.officeState)} office work</div>`
+              : txt;
+          })()],
           ["Description of loss", multiline(w.descriptionOfLoss)],
           ["Property", multiline(w.descriptionOfProperty)],
           ["Scope of service", multiline(w.scopeOfService)],
@@ -419,7 +439,7 @@ const WO = (() => {
     });
   }
 
-  return { openEditor, openDetail, duplicate, createInvoiceFrom, warnings, jobFinancials, feeText, linked, changeStatus, openStatusSheet, expectedFee, isPendingInvoice, billingState, calcRouteMileageReimb, mileageBillRate };
+  return { openEditor, openDetail, duplicate, createInvoiceFrom, warnings, jobFinancials, feeText, linked, changeStatus, openStatusSheet, expectedFee, isPendingInvoice, billingState, calcRouteMileageReimb, mileageBillRate, stateSource, stateSplitText };
 })();
 
 Views.workorders = {
@@ -443,10 +463,14 @@ Views.workorders = {
 
     UI.listView(el.querySelector("#wo-list"), {
       data: () => Store.all("workOrder"),
-      searchText: w => [w.woNumber, w.projectNumber, Store.clientName(w.clientId), w.claimNumber, w.insuredName, w.lossLocation, w.jobType, w.insuranceCarrier].join(" "),
+      searchText: w => [w.woNumber, w.projectNumber, Store.clientName(w.clientId), w.claimNumber, w.insuredName, w.lossLocation, w.jobType, w.insuranceCarrier, w.workState, SCHEMA.stateName(w.workState)].join(" "),
       filters: [
         { id: "status", label: "Status", multi: true, options: SCHEMA.workOrderStatuses.map(s => s.value), apply: (w, v) => w.status === v },
         { id: "client", label: "Client", options: () => Store.all("client").map(c => ({ value: c.id, label: c.name })), apply: (w, v) => w.clientId === v },
+        { id: "state", label: "State",
+          options: () => [...new Set(Store.all("workOrder").map(w => w.workState).filter(Boolean))].sort()
+            .map(c => ({ value: c, label: `${c} — ${SCHEMA.stateName(c)}` })),
+          apply: (w, v) => w.workState === v },
         { id: "jobType", label: "Job Type", options: SCHEMA.jobTypes, apply: (w, v) => w.jobType === v },
         { id: "flag", label: "Alert", options: [
             { value: "unbilled", label: "Submitted, not invoiced" },
@@ -468,6 +492,7 @@ Views.workorders = {
         { label: "Client", value: w => Store.clientName(w.clientId) || "—" },
         { label: "Claim #", value: w => w.claimNumber || "—" },
         { label: "Type", html: w => w.jobType ? UI.badge(w.jobType, "slate") : "—", sortVal: w => w.jobType || "" },
+        { label: "State", html: w => w.workState ? UI.badge(WO.stateSplitText(w), "purple") : "—", sortVal: w => w.workState || "" },
         { label: "Assigned", value: w => U.fmtDate(w.dateAssigned), sortVal: w => w.dateAssigned || "" },
         { label: "Report due", html: w => {
             if (!w.reportDueDate) return "—";
@@ -492,6 +517,7 @@ Views.workorders = {
           <div class="record-card-sub">${U.escapeHtml(Store.clientName(w.clientId))} · ${U.escapeHtml(U.truncate(w.insuredName || w.lossLocation || "", 36))}</div>
           <div class="record-card-meta">
             ${w.reportDueDate ? UI.badge(`Due ${U.fmtDateShort(w.reportDueDate)}`, SCHEMA.woOpenStatuses.includes(w.status) && U.daysFromToday(w.reportDueDate) < 0 ? "red" : "slate") : ""}
+            ${w.workState ? UI.badge("📍 " + WO.stateSplitText(w), "purple") : ""}
             ${UI.badge(WO.feeText(w), "blue")}
             ${(() => { const b = WO.billingState(w); return b.rank ? UI.badge(b.label, b.color) : ""; })()}
             ${warns.map(x => UI.badge(x.text, x.color)).join("")}

@@ -117,6 +117,22 @@ const Alerts = (() => {
       items: S.invoices.filter(i => i.status === "Paid" && (!i.paymentDate || !i.paymentMethod)),
     });
 
+    /* --- State sourcing --- */
+    push({
+      id: "inc-no-state", icon: "📍", route: "income", severity: "warn", weight: 2,
+      title: "Income not sourced to a state",
+      sub: "Set the field state on the work order (or the payment) so your CPA can file the right state returns",
+      items: d.income.filter(i => !Store.incomeStateSplit(i).length),
+    });
+    // a job with a loss address but no field state silently sources 100% to the office
+    // state — which is wrong whenever the inspection was actually out of state
+    push({
+      id: "wo-no-state", icon: "🗺️", route: "settings", severity: "warn", weight: 2,
+      title: "Work orders missing the state the inspection was performed in",
+      sub: "Settings → Data health → “Set work states from loss locations” fills these in from the addresses",
+      items: d.workOrders.filter(w => !w.workState && String(w.lossLocation || "").trim()),
+    });
+
     /* --- Assets --- */
     push({
       id: "asset-depr", icon: "🛠️", route: "assets", severity: "info", weight: 1,

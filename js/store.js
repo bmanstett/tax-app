@@ -20,6 +20,8 @@ const Store = (() => {
       peNumbers: [],           // [{state: "VA", number: "0402068317"}, …]
       coaNumber: "",
       businessStartDate: "",
+      officeState: "VA",           // where admin/research/report work happens
+      defaultFieldWorkPct: 50,     // % of a job's fee sourced to the inspection state
       homeBase: "Home office",
       businessAddress: "",
       businessEmail: "",
@@ -276,6 +278,88 @@ const Store = (() => {
       seTax, fedReserve, stateReserve, totalReserve,
       taxPaymentsMade: paid, reserveRemaining: U.round2(totalReserve - paid),
       mileageMiles: U.sum(d.mileage, r => r.miles), mileageRate: mileageRate(y),
+    };
+  }
+
+  /* ---------- state sourcing (which state's return the income belongs on) ----------
+     A forensic job is usually split: the inspection happens on site (often out of
+     state) while the research, analysis, and report write-up happen at the office.
+     The work order carries that split; income inherits it unless it overrides. */
+
+  /** The work order behind an income entry — linked directly, else via its invoice. */
+  function incomeWorkOrder(inc) {
+    if (!inc) return null;
+    const id = inc.workOrderId || (inc.invoiceId ? (get("invoice", inc.invoiceId) || {}).workOrderId : null);
+    return id ? get("workOrder", id) : null;
+  }
+
+  /** Where an income entry's state split comes from and what it is.
+      → {from: "income"|"workOrder"|"settings", label, workState, officeState, pct} */
+  function incomeStateSource(inc) {
+    const s = state.settings;
+    const w = incomeWorkOrder(inc);
+    if (inc && inc.workState) {
+      return {
+        from: "income", label: "this entry",
+        workState: String(inc.workState).toUpperCase(),
+        officeState: ((w && w.officeState) || s.officeState || "").toUpperCase(),
+        pct: inc.fieldWorkPct,
+      };
+    }
+    if (w && w.workState) {
+      return {
+        from: "workOrder", label: w.woNumber || w.projectNumber || "the linked work order",
+        workState: String(w.workState).toUpperCase(),
+        officeState: String(w.officeState || s.officeState || "").toUpperCase(),
+        pct: w.fieldWorkPct,
+      };
+    }
+    return {
+      from: "settings", label: "office default",
+      workState: "",
+      officeState: String((w && w.officeState) || s.officeState || "").toUpperCase(),
+      pct: null,
+    };
+  }
+
+  /** How one income entry splits across states → [{state, pct, amount}].
+      Empty array means the entry can't be sourced yet (no office state set). */
+  function incomeStateSplit(inc) {
+    const src = incomeStateSource(inc);
+    const amount = U.round2(Number(inc.amount) || 0);
+    const { workState, officeState } = src;
+    if (!workState || !officeState || workState === officeState) {
+      const only = workState || officeState;
+      return only ? [{ state: only, pct: 100, amount }] : [];
+    }
+    const p = SCHEMA.clampPct(src.pct);
+    const fieldAmt = U.round2(amount * p / 100);
+    return [
+      { state: workState, pct: p, amount: fieldAmt },
+      { state: officeState, pct: 100 - p, amount: U.round2(amount - fieldAmt) },  // absorbs rounding
+    ];
+  }
+
+  /** Income for a tax year allocated by state, for the CPA's state returns.
+      → {states:[{state, name, amount, entries}], unassigned:{amount, entries}, total} */
+  function stateIncomeSummary(y) {
+    const rows = {};
+    let unassigned = { amount: 0, entries: 0 };
+    let total = 0;
+    for (const inc of yearData(y).income) {
+      total += Number(inc.amount) || 0;
+      const parts = incomeStateSplit(inc);
+      if (!parts.length) { unassigned.amount += Number(inc.amount) || 0; unassigned.entries++; continue; }
+      for (const p of parts) {
+        rows[p.state] = rows[p.state] || { state: p.state, name: SCHEMA.stateName(p.state), amount: 0, entries: 0 };
+        rows[p.state].amount = U.round2(rows[p.state].amount + p.amount);
+        rows[p.state].entries++;
+      }
+    }
+    return {
+      states: U.sortBy(Object.values(rows), r => r.amount, -1),
+      unassigned: { amount: U.round2(unassigned.amount), entries: unassigned.entries },
+      total: U.round2(total),
     };
   }
 
@@ -537,6 +621,7 @@ const Store = (() => {
     invoiceTotal, invoiceBalance, invoiceIsOverdue,
     mileageRate, tripDeduction, expenseDeductibleAmt,
     yearData, taxSummary,
+    incomeWorkOrder, incomeStateSource, incomeStateSplit, stateIncomeSummary,
     findDuplicates, setDuplicateIgnored, statusChangedAt, integrityCheck,
     exportJSON, importJSON, validateImport, resetAll, applySynced,
     isYearLocked, backupDue, markBackedUp, markSettingsChanged,

@@ -68,6 +68,51 @@ SCHEMA.incomeCategories = ["Service Income (1099)", "Service Income (Invoiced)",
 
 SCHEMA.paymentTermsOptions = ["Due on Receipt", "Net 15", "Net 30", "Net 45", "Net 60"];
 
+/* ---------- US states (for sourcing income to the right state return) ---------- */
+SCHEMA.usStates = [
+  ["AL", "Alabama"], ["AK", "Alaska"], ["AZ", "Arizona"], ["AR", "Arkansas"], ["CA", "California"],
+  ["CO", "Colorado"], ["CT", "Connecticut"], ["DE", "Delaware"], ["DC", "District of Columbia"],
+  ["FL", "Florida"], ["GA", "Georgia"], ["HI", "Hawaii"], ["ID", "Idaho"], ["IL", "Illinois"],
+  ["IN", "Indiana"], ["IA", "Iowa"], ["KS", "Kansas"], ["KY", "Kentucky"], ["LA", "Louisiana"],
+  ["ME", "Maine"], ["MD", "Maryland"], ["MA", "Massachusetts"], ["MI", "Michigan"], ["MN", "Minnesota"],
+  ["MS", "Mississippi"], ["MO", "Missouri"], ["MT", "Montana"], ["NE", "Nebraska"], ["NV", "Nevada"],
+  ["NH", "New Hampshire"], ["NJ", "New Jersey"], ["NM", "New Mexico"], ["NY", "New York"],
+  ["NC", "North Carolina"], ["ND", "North Dakota"], ["OH", "Ohio"], ["OK", "Oklahoma"], ["OR", "Oregon"],
+  ["PA", "Pennsylvania"], ["PR", "Puerto Rico"], ["RI", "Rhode Island"], ["SC", "South Carolina"],
+  ["SD", "South Dakota"], ["TN", "Tennessee"], ["TX", "Texas"], ["UT", "Utah"], ["VT", "Vermont"],
+  ["VA", "Virginia"], ["WA", "Washington"], ["WV", "West Virginia"], ["WI", "Wisconsin"], ["WY", "Wyoming"],
+];
+/** A percentage coerced into 0–100, defaulting to the configured field-work split. */
+SCHEMA.clampPct = v => {
+  const n = v === "" || v == null ? (Store.state.settings.defaultFieldWorkPct ?? 50) : Number(v);
+  return Math.min(Math.max(isNaN(n) ? 50 : n, 0), 100);
+};
+/** "MD 50% / VA 50%" — a one-line summary of a state source (see Store.incomeStateSource). */
+SCHEMA.describeSplit = src => {
+  if (!src) return "—";
+  const { workState, officeState } = src;
+  if (!workState || !officeState || workState === officeState) {
+    const only = workState || officeState;
+    return only ? `${only} 100%` : "—";
+  }
+  const p = SCHEMA.clampPct(src.pct);
+  return `${workState} ${p}% / ${officeState} ${100 - p}%`;
+};
+SCHEMA.stateName = code => {
+  const hit = SCHEMA.usStates.find(([c]) => c === String(code || "").toUpperCase());
+  return hit ? hit[1] : (code || "");
+};
+/** Pull a state code out of an address ("… Springfield, VA 22152" or "…, MD"). */
+SCHEMA.stateFromAddress = address => {
+  const s = String(address || "").toUpperCase();
+  const m = s.match(/,\s*([A-Z]{2})\s+\d{5}/) || s.match(/,\s*([A-Z]{2})\s*$/m);
+  if (m && SCHEMA.usStates.some(([c]) => c === m[1])) return m[1];
+  // fall back to a spelled-out name, longest first so "West Virginia" doesn't match "Virginia"
+  const named = [...SCHEMA.usStates].sort((a, b) => b[1].length - a[1].length)
+    .find(([, n]) => new RegExp(`\\b${n.toUpperCase()}\\b`).test(s));
+  return named ? named[0] : "";
+};
+
 /* ---------- Expense categories → Schedule C-style mapping ----------
    scheduleC is the *organizer line* the CPA will map to; the app does
    not decide final deductibility. */
@@ -176,6 +221,31 @@ SCHEMA.fields.workOrder = [
   F("descriptionOfProperty", "Description of Property", "textarea", { span2: true }),
   F("scopeOfService", "Scope of Service", "textarea", { span2: true }),
   F("additionalNotes", "Additional Notes / Instructions", "textarea", { span2: true }),
+
+  F("_s3b", "Where the Work Was Performed (state taxes)", "section"),
+  F("workState", "Field / Inspection State", "usState", {
+    hint: "The state you physically inspected in. Auto-filled from the loss-location address on PDF import.",
+    actionBtn: {
+      label: "📍 Use the loss-location state",
+      showIf: v => !!String(v.lossLocation || "").trim(),
+      onClick({ values, setValue, rerender }) {
+        const code = SCHEMA.stateFromAddress(values.lossLocation);
+        if (!code) { UI.toast("No state found in the loss-location address — pick it manually", "error", 5000); return; }
+        setValue("workState", code);
+        UI.toast(`Field state set to ${code} — ${SCHEMA.stateName(code)}`, "success");
+        rerender();   // reveals the field/office split %
+      },
+    } }),
+  F("officeState", "Office / Admin State", "usState", { defaultFromSettings: "officeState",
+    hint: "Where the research, analysis, and report writing happen — your office." }),
+  F("fieldWorkPct", "% of the fee earned in the field state", "percent", {
+    default: () => Store.state.settings.defaultFieldWorkPct ?? 50,
+    showIf: r => !!r.workState && !!r.officeState && r.workState !== r.officeState,
+    hint: r => {
+      const p = SCHEMA.clampPct(r.fieldWorkPct);
+      return `${p}% of this job's income is sourced to ${r.workState} (on-site inspection) and ${100 - p}% to ${r.officeState} ` +
+        `(research, analysis, report write-up at your office). Change the default in Settings. Final state sourcing is your CPA's call.`;
+    } }),
 
   F("_s4", "Other Parties", "section"),
   F("paContact", "Public Adjuster Contact", "text"),
@@ -304,6 +374,26 @@ SCHEMA.fields.income = [
   F("workOrderId", "Linked Work Order", "workorder"),
   F("serviceType", "Service Type", "select", { options: SCHEMA.serviceTypes, allowEmpty: true }),
   F("category", "Income Category", "select", { options: SCHEMA.incomeCategories, default: "Service Income (1099)" }),
+
+  F("_s1b", "State the Work Was Performed In", "section"),
+  F("workState", "Field / Inspection State", "usState", {
+    hint: r => {
+      const src = Store.incomeStateSource(r);
+      if (r.workState) return "Overriding the linked work order for this payment.";
+      return src.from === "workOrder"
+        ? `Inherited from ${src.label}: ${SCHEMA.describeSplit(src)}. Leave blank to keep it in sync.`
+        : src.from === "settings"
+          ? `No work order linked — this is being sourced entirely to ${src.officeState || "your office state"}. Pick a state here if the work happened elsewhere.`
+          : "Link a work order above, or pick the state this income was earned in.";
+    } }),
+  F("fieldWorkPct", "% earned in the field state", "percent", {
+    showIf: r => !!r.workState,
+    default: () => Store.state.settings.defaultFieldWorkPct ?? 50,
+    hint: r => {
+      const p = SCHEMA.clampPct(r.fieldWorkPct);
+      const office = Store.incomeStateSource(r).officeState || "your office state";
+      return `${p}% to ${r.workState}, ${100 - p}% to ${office} (office research and report write-up).`;
+    } }),
 
   F("_s2", "1099 Tracking", "section"),
   F("is1099", "This is 1099 income", "checkbox", { default: true }),

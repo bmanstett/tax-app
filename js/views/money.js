@@ -114,6 +114,7 @@ Views.income = {
     const total = U.sum(d.income, i => i.amount);
     const t99 = U.sum(d.income.filter(i => i.is1099), i => i.amount);
     const unlinked = d.income.filter(i => !i.invoiceId && !i.clientId).length;
+    const st = Store.stateIncomeSummary(year);
 
     el.innerHTML = UI.pageHeader("Income", "Every dollar in — invoiced or not.",
       `<button class="btn" id="inc-1099">🔀 1099 Reconciliation</button>
@@ -123,11 +124,23 @@ Views.income = {
         ${UI.statCard({ label: "1099 income", value: U.money(t99), sub: `${U.money(total - t99)} other` })}
         ${UI.statCard({ label: "Entries", value: String(d.income.length) })}
         ${UI.statCard({ label: "Unlinked entries", value: String(unlinked), sub: unlinked ? "link to client/invoice" : "all linked", color: unlinked ? "amber" : "green" })}
+        ${UI.statCard({
+          label: "Income by state",
+          value: st.states.length ? st.states.slice(0, 3).map(x => x.state).join(" · ") : "—",
+          sub: st.states.length
+            ? st.states.slice(0, 3).map(x => `${x.state} ${U.money(x.amount, { cents: false })}`).join(" · ") +
+              (st.unassigned.entries ? ` · ${st.unassigned.entries} need a state` : "")
+            : "set the field state on your work orders",
+          color: st.unassigned.entries ? "amber" : "purple",
+        })}
       </div>
       <div id="inc-list"></div>`;
 
     el.querySelector("#inc-add").addEventListener("click", () => Income.openEditor(null));
     el.querySelector("#inc-1099").addEventListener("click", () => Income.open1099Tool());
+
+    // "MD 50% / VA 50%" — where this money was earned, for the CPA's state returns
+    const stateText = r => SCHEMA.describeSplit(Store.incomeStateSource(r));
 
     // WO # for an income row — direct link, else via the linked invoice's work order
     const woNumFor = r => {
@@ -137,11 +150,15 @@ Views.income = {
 
     UI.listView(el.querySelector("#inc-list"), {
       data: () => Store.all("income"),
-      searchText: i => [Store.clientName(i.clientId), i.sourceOther, i.category, i.serviceType, i.notes, Store.invLabel(i.invoiceId), woNumFor(i)].join(" "),
+      searchText: i => [Store.clientName(i.clientId), i.sourceOther, i.category, i.serviceType, i.notes, Store.invLabel(i.invoiceId), woNumFor(i), stateText(i)].join(" "),
       filters: [
         { id: "yr", label: "Year", options: App.yearsWithData(), apply: (r, v) => U.yearOf(r.date) === Number(v) },
         { id: "client", label: "Client", options: () => Store.all("client").map(c => ({ value: c.id, label: c.name })), apply: (r, v) => r.clientId === v },
         { id: "t99", label: "1099", options: [{ value: "yes", label: "1099 income" }, { value: "no", label: "Non-1099" }], apply: (r, v) => v === "yes" ? !!r.is1099 : !r.is1099 },
+        { id: "state", label: "State",
+          options: () => [...new Set(Store.all("income").flatMap(r => Store.incomeStateSplit(r).map(p => p.state)))].sort()
+            .map(c => ({ value: c, label: `${c} — ${SCHEMA.stateName(c)}` })),
+          apply: (r, v) => Store.incomeStateSplit(r).some(p => p.state === v) },
       ],
       columns: [
         { label: "Date", value: r => U.fmtDate(r.date), sortVal: r => r.date || "" },
@@ -150,6 +167,11 @@ Views.income = {
         { label: "Category", value: r => r.category || "—" },
         { label: "Invoice", value: r => Store.invLabel(r.invoiceId) || "—" },
         { label: "Work order", value: r => woNumFor(r) || "—" },
+        { label: "State", html: r => {
+            const t = stateText(r);
+            return t === "—" ? `<span style="color:var(--amber)" title="No state set — add one so this lands on the right state return">needs state</span>`
+              : `${U.escapeHtml(t)}${r.workState ? ` <span title="Overridden on this entry" style="color:var(--text-3)">✎</span>` : ""}`;
+          }, sortVal: r => stateText(r) },
         { label: "Method", value: r => r.paymentMethod || "—" },
         { label: "Flags", html: r => [r.is1099 ? UI.badge("1099", "blue") : "", r.cpaReview ? UI.badge("CPA", "amber") : ""].join(" ") },
       ],
@@ -163,7 +185,10 @@ Views.income = {
           <div class="record-card-amount" style="color:var(--green)">${U.money(r.amount)}</div>
         </div>
         <div class="record-card-sub">${U.fmtDate(r.date)} · ${U.escapeHtml(r.category || "")}</div>
-        <div class="record-card-meta">${r.is1099 ? UI.badge("1099", "blue") : ""}${r.invoiceId ? UI.badge(Store.invLabel(r.invoiceId), "slate") : ""}${wo ? UI.badge("📋 " + wo, "teal") : ""}${r.cpaReview ? UI.badge("CPA review", "amber") : ""}</div>
+        <div class="record-card-meta">${r.is1099 ? UI.badge("1099", "blue") : ""}${r.invoiceId ? UI.badge(Store.invLabel(r.invoiceId), "slate") : ""}${wo ? UI.badge("📋 " + wo, "teal") : ""}${(() => {
+          const t = stateText(r);
+          return t === "—" ? UI.badge("needs state", "amber") : UI.badge("📍 " + t, "purple");
+        })()}${r.cpaReview ? UI.badge("CPA review", "amber") : ""}</div>
       </div>`;
       },
       empty: { icon: "💵", title: "No income logged", sub: "Log payments here — they reconcile against invoices and 1099s.", actionLabel: "＋ Log Income", actionId: "inc-empty-add", onAction: () => Income.openEditor(null) },

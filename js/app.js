@@ -83,6 +83,19 @@ const App = (() => {
 
   function rerender() { render(); }
 
+  /** Rerender only if the user isn't mid-edit. Background syncs pull changes from the
+      other device at any moment; rebuilding the page under a half-typed field (or an
+      open form) would throw that typing away. Skipping is safe — the next sync pass,
+      or the user's own save, refreshes the page. */
+  function rerenderIfIdle() {
+    const ae = document.activeElement;
+    if (ae && /INPUT|TEXTAREA|SELECT/.test(ae.tagName)) return false;
+    if (document.getElementById("modal-root").children.length) return false;
+    if (document.getElementById("sheet-root").children.length) return false;
+    render();
+    return true;
+  }
+
   /** Housekeeping that should hold true no matter how records got here — typed in,
       imported, or pulled from another device. Safe to run repeatedly. */
   function tidyData({ announce = false } = {}) {
@@ -239,5 +252,5 @@ const App = (() => {
 
   document.addEventListener("DOMContentLoaded", init);
 
-  return { go, rerender, render, viewYear, yearsWithData, yearPickerHtml, refreshNav, quickAdd, tidyData };
+  return { go, rerender, rerenderIfIdle, render, viewYear, yearsWithData, yearPickerHtml, refreshNav, quickAdd, tidyData };
 })();

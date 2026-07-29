@@ -89,8 +89,7 @@ const ImportWO = (() => {
 
   /** Map a US state abbreviation out of an address ("… Springfield, VA 22152"). */
   function stateFrom(address) {
-    const m = String(address || "").match(/,\s*([A-Z]{2})\s+\d{5}/);
-    return m ? m[1] : "";
+    return SCHEMA.stateFromAddress(address);
   }
 
   /** Pick the PE number: prefer the one on the form; else match loss-location state. */
@@ -179,6 +178,9 @@ const ImportWO = (() => {
       insuredPhone: phones,
       insuredEmail: get("Insured Email"),
       lossLocation,
+      workState: lossState,
+      officeState: Store.state.settings.officeState || "",
+      fieldWorkPct: Store.state.settings.defaultFieldWorkPct ?? 50,
       descriptionOfLoss: get("Description of Loss"),
       descriptionOfProperty: get("Description of Property"),
       scopeOfService: get("Scope of Service"),
@@ -208,6 +210,7 @@ const ImportWO = (() => {
       if (!presets[key]) warnings.push(`${label} not found — check the form.`);
     }
     if (!flatFee && feeType !== "T&E") warnings.push("Fee amount not found — enter it manually.");
+    if (lossLocation && !lossState) warnings.push("State not recognized in the loss location — set the field state so the income lands on the right state return.");
     return { presets, warnings, fields: f };
   }
 

@@ -153,10 +153,11 @@ const UI = (() => {
           if (input.type === "checkbox") values[key] = input.checked;
           else if (input.type === "file") { pendingFile = input.files[0] || null; showFilePreview(input, pendingFile); return; }
           else values[key] = input.value;
-          if (f && (f.type === "checkbox" || f.type === "select" || f.type === "client" || f.type === "workorder")) {
+          if (f && (f.type === "checkbox" || f.type === "select" || f.type === "usState" || f.type === "client" || f.type === "workorder")) {
             // re-render if any field (or action button) visibility depends on values
-            if (fields.some(x => x.showIf || (x.actionBtn && x.actionBtn.showIf))) { snapshotAndRerender(); }
+            if (fields.some(x => x.showIf || (x.actionBtn && x.actionBtn.showIf))) { snapshotAndRerender(); return; }
           }
+          refreshDynamicHints();
         });
       });
       // per-field action buttons (e.g. "Calculate miles" on the mileage form)
@@ -183,6 +184,9 @@ const UI = (() => {
               if (!h) { h = document.createElement("div"); h.className = "hint action-hint"; btn.insertAdjacentElement("afterend", h); }
               h.textContent = text;
             },
+            // rebuild the form — needed when the value just set reveals another field
+            // (showIf). Discards any inline hint(), so toast instead of hinting.
+            rerender: () => snapshotAndRerender(),
           });
         });
       });
@@ -227,6 +231,15 @@ const UI = (() => {
             },
           });
         });
+      });
+    }
+
+    /** Re-evaluate function hints (e.g. the live state-allocation preview) in place,
+        so they follow what's typed without rebuilding the form and stealing focus. */
+    function refreshDynamicHints() {
+      form.querySelectorAll("[data-dynamic-hint]").forEach(h => {
+        const f = fields.find(x => x.key === h.getAttribute("data-dynamic-hint"));
+        if (f && typeof f.hint === "function") h.textContent = f.hint(values);
       });
     }
 
@@ -334,7 +347,10 @@ const UI = (() => {
     const val = values[f.key] ?? "";
     const span = f.span2 || f.type === "textarea" ? "span-2" : "";
     const req = f.required ? '<span class="req"> *</span>' : "";
-    const hint = f.hint ? `<div class="hint">${U.escapeHtml(f.hint)}</div>` : "";
+    // hints may be functions of the current values — those re-evaluate as you type
+    const hint = f.hint
+      ? `<div class="hint"${typeof f.hint === "function" ? ` data-dynamic-hint="${f.key}"` : ""}>${U.escapeHtml(typeof f.hint === "function" ? f.hint(values) : f.hint)}</div>`
+      : "";
     const label = `<label for="fld-${f.key}">${U.escapeHtml(f.label)}${req}</label>`;
     const actionBtn = (f.actionBtn && (!f.actionBtn.showIf || f.actionBtn.showIf(values))) ? `<button type="button" class="btn btn-sm" data-field-action="${f.key}" style="margin-top:6px">${U.escapeHtml(f.actionBtn.label)}</button>` : "";
     const wrap = inner => `<div class="field ${span}" data-field-wrap="${f.key}">${label}${inner}${actionBtn}${hint}</div>`;
@@ -364,6 +380,15 @@ const UI = (() => {
         return wrap(`<select id="fld-${f.key}" data-key="${f.key}">
           <option value="">—</option>
           ${opts.map(o => `<option value="${esc(o.v)}" ${String(val) === String(o.v) ? "selected" : ""}>${esc(o.label)}</option>`).join("")}</select>`);
+      }
+      case "usState": {
+        const cur = String(val || "").toUpperCase();
+        const known = SCHEMA.usStates.some(([c]) => c === cur);
+        return wrap(`<select id="fld-${f.key}" data-key="${f.key}">
+          <option value="">—</option>
+          ${!known && cur ? `<option value="${esc(cur)}" selected>${esc(cur)}</option>` : ""}
+          ${SCHEMA.usStates.map(([c, n]) => `<option value="${c}" ${cur === c ? "selected" : ""}>${c} — ${esc(n)}</option>`).join("")}
+        </select>`);
       }
       case "expenseCategory": {
         return wrap(`<select id="fld-${f.key}" data-key="${f.key}">

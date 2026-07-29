@@ -9,7 +9,11 @@ window.Views = window.Views || {};
 Views.settings = {
   title: "Settings & Backup",
   render(el) {
-    const s = Store.state.settings;
+    // `s` is only safe for reading while building the markup below. Every save handler
+    // must go through live() instead: a background sync (Store.applySynced) swaps in a
+    // brand-new state object, and writing to a captured one is silently thrown away.
+    const live = () => Store.state.settings;
+    const s = live();
     const rates = s.mileageRates || {};
     const rateYears = Object.keys(rates).map(Number).sort((a, b) => b - a);
 
@@ -55,6 +59,14 @@ Views.settings = {
                 <div class="hint">One row per state license (e.g. VA — 0402068317). Add the expiration date to get a renewal alert within 6 months. Work order forms let you pick from this list, and PDF imports auto-match the loss-location state.</div>
               </div>
               <div class="field"><label>Business start date</label><input type="date" id="st-start" value="${U.escapeHtml(s.businessStartDate || "")}"></div>
+              <div class="field"><label>Office / admin state</label>
+                <select id="st-officestate">
+                  <option value="">—</option>
+                  ${SCHEMA.usStates.map(([c, n]) => `<option value="${c}" ${(s.officeState || "") === c ? "selected" : ""}>${c} — ${U.escapeHtml(n)}</option>`).join("")}
+                </select></div>
+              <div class="field span-2"><label>Default field-work split (% sourced to the inspection state)</label>
+                <input type="number" min="0" max="100" step="5" id="st-fieldpct" value="${s.defaultFieldWorkPct ?? 50}">
+                <div class="hint">When a job is inspected out of state, this much of its income is sourced to the inspection state and the rest to ${U.escapeHtml(s.officeState || "your office state")} — where the research, analysis, and report write-up happen. Each work order can override it. Confirm the split with your CPA.</div></div>
               <div class="field"><label>Home base (mileage start)</label><input type="text" id="st-homebase" value="${U.escapeHtml(s.homeBase || "")}"></div>
               <div class="field span-2"><label>Business address (shows on invoices)</label><textarea id="st-address">${U.escapeHtml(s.businessAddress || "")}</textarea></div>
               <div class="field"><label>Business email</label><input type="email" id="st-email" value="${U.escapeHtml(s.businessEmail || "")}"></div>
@@ -145,6 +157,7 @@ Views.settings = {
               <button class="btn" id="st-dupes">Review duplicates</button>
               <button class="btn" id="st-fix-paid">Complete paid-invoice payment info</button>
               <button class="btn" id="st-fix-incdates">Sync income dates to invoice payments</button>
+              <button class="btn" id="st-fix-states">Set work states from loss locations</button>
             </div>
             <div class="hint" style="font-size:11.5px;color:var(--text-3);margin-bottom:8px">“Sync income dates” re-dates each invoice-linked income entry to that invoice’s <strong>payment date</strong>, so the monthly income / net-profit charts land in the month the invoice was actually paid. (Set the payment date on each invoice first.)</div>
             <div id="st-health-out"></div>
@@ -183,8 +196,9 @@ Views.settings = {
     }
     function savePeNumbers() {
       const peNumbers = readPeNumbers();
-      s.peNumbers = peNumbers;
-      s.peNumber = peNumbers.length ? peNumbers[0].number : "";
+      const cur = live();
+      cur.peNumbers = peNumbers;
+      cur.peNumber = peNumbers.length ? peNumbers[0].number : "";
       Store.markSettingsChanged();   // persists + stamps for sync
       App.refreshNav();
     }
@@ -204,8 +218,9 @@ Views.settings = {
 
     g("#st-save-profile").addEventListener("click", () => {
       const peNumbers = readPeNumbers();
-      Object.assign(s, {
-        businessName: g("#st-bizname").value.trim() || s.businessName,
+      const cur = live();
+      Object.assign(cur, {
+        businessName: g("#st-bizname").value.trim() || cur.businessName,
         entityType: g("#st-entity").value.trim(),
         ownerName: g("#st-owner").value.trim(),
         engineerName: g("#st-engineer").value.trim(),
@@ -213,6 +228,8 @@ Views.settings = {
         peNumber: peNumbers.length ? peNumbers[0].number : "",
         coaNumber: g("#st-coa").value.trim(),
         businessStartDate: g("#st-start").value,
+        officeState: g("#st-officestate").value,
+        defaultFieldWorkPct: Math.min(Math.max(Number(g("#st-fieldpct").value) || 0, 0), 100),
         homeBase: g("#st-homebase").value.trim(),
         businessAddress: g("#st-address").value,
         businessEmail: g("#st-email").value.trim(),
@@ -230,14 +247,15 @@ Views.settings = {
         const v = Number(inp.value);
         if (y && v > 0) newRates[y] = v;
       });
-      Object.assign(s, {
-        taxYear: Number(g("#st-taxyear").value) || s.taxYear,
+      const cur = live();
+      Object.assign(cur, {
+        taxYear: Number(g("#st-taxyear").value) || cur.taxYear,
         seTaxRatePct: Number(g("#st-se").value) || 0,
         federalReservePct: Number(g("#st-fed").value) || 0,
         stateReservePct: Number(g("#st-state").value) || 0,
         largeExpenseThreshold: Number(g("#st-large").value) || 2500,
         backupReminderDays: Number(g("#st-bakdays").value) || 14,
-        mileageRates: Object.keys(newRates).length ? newRates : s.mileageRates,
+        mileageRates: Object.keys(newRates).length ? newRates : cur.mileageRates,
       });
       Store.logAudit("updated", "settings", { id: "assumptions" }, [{ field: "taxAssumptions", from: "", to: "updated" }]);
       Store.markSettingsChanged(); UI.toast("Tax assumptions saved", "success"); App.rerender();
@@ -338,6 +356,34 @@ Views.settings = {
       g("#st-health-out").innerHTML = `<div style="font-size:13px;font-weight:700;color:${n ? "var(--green)" : "var(--text-2)"}">${n ? `✓ Re-dated ${n} income entr${n > 1 ? "ies" : "y"} to match invoice payment dates. Your monthly charts now reflect them.` : "No changes — income dates already match invoice payment dates."}</div>` +
         (invoicesWithoutDate ? `<div class="hint" style="font-size:12px;color:var(--amber);margin-top:5px">${invoicesWithoutDate} paid invoice(s) have no payment date set — open each and set its Payment Date, then run this again.</div>` : "");
       if (n) UI.toast(`Updated ${n} income date${n > 1 ? "s" : ""}`, "success");
+    });
+    // backfill: read the inspection state off each work order's loss-location address
+    g("#st-fix-states").addEventListener("click", () => {
+      const cur = live();
+      if (!cur.officeState) {
+        g("#st-health-out").innerHTML = `<div style="font-size:12.5px;color:var(--red);font-weight:700">Set your office / admin state in the Business profile above first, then run this.</div>`;
+        return;
+      }
+      const todo = Store.all("workOrder").filter(w => !w.workState && String(w.lossLocation || "").trim());
+      let filled = 0;
+      const unreadable = [];
+      todo.forEach(w => {
+        const code = SCHEMA.stateFromAddress(w.lossLocation);
+        if (!code) { unreadable.push(w.woNumber || w.projectNumber || "(unnumbered)"); return; }
+        Store.update("workOrder", w.id, {
+          workState: code,
+          officeState: w.officeState || cur.officeState,
+          fieldWorkPct: w.fieldWorkPct == null || w.fieldWorkPct === "" ? (cur.defaultFieldWorkPct ?? 50) : w.fieldWorkPct,
+        });
+        filled++;
+      });
+      g("#st-health-out").innerHTML =
+        `<div style="font-size:13px;font-weight:700;color:${filled ? "var(--green)" : "var(--text-2)"}">${filled
+          ? `✓ Set the field state on ${filled} work order${filled > 1 ? "s" : ""} from their loss-location addresses. Linked income now sources to the right state.`
+          : todo.length ? "No states could be read from the remaining loss-location addresses." : "Every work order with a loss location already has a field state."}</div>` +
+        (unreadable.length ? `<div class="hint" style="font-size:12px;color:var(--amber);margin-top:5px">No state found in the address for: ${U.escapeHtml(unreadable.slice(0, 12).join(", "))}${unreadable.length > 12 ? ` and ${unreadable.length - 12} more` : ""} — set those by hand on each work order.</div>` : "") +
+        `<div class="hint" style="font-size:12px;color:var(--text-3);margin-top:5px">Review each job afterwards: this reads the address only, so a job you inspected somewhere other than the loss address needs a manual fix.</div>`;
+      if (filled) { UI.toast(`Set the work state on ${filled} work order${filled > 1 ? "s" : ""}`, "success"); App.refreshNav(); }
     });
     g("#st-dupes").addEventListener("click", () => {
       const dupes = Store.findDuplicates();

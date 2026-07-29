@@ -259,7 +259,7 @@ const Sync = (() => {
       }
       setStatus("ok");
       // records pulled from another device may predate the payment defaults — tidy them too
-      if (res.pulledChanges && window.App) { App.tidyData(); App.rerender(); }
+      if (res.pulledChanges && window.App) { App.tidyData(); App.rerenderIfIdle(); }
       if (manual) UI.toast("Sync complete ✓", "success");
       return { ok: true, ...res };
     } catch (e) {

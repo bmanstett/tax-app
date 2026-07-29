@@ -111,6 +111,63 @@ const Reports = (() => {
         U.sortBy(rows, r => r.total, -1), { totalRow: ["TOTAL", U.sum(rows, r => r.count), U.money(U.sum(rows, r => r.total))] }));
   }
 
+  /** Income sourced by state — what the CPA needs to decide which state returns to file. */
+  function incomeByState(year) {
+    const sum = Store.stateIncomeSummary(year);
+    const s = Store.state.settings;
+    const detail = U.sortBy(Store.yearData(year).income, r => r.date || "", 1).map(r => {
+      const src = Store.incomeStateSource(r);
+      const parts = Store.incomeStateSplit(r);
+      const w = Store.incomeWorkOrder(r);
+      return {
+        date: U.fmtDate(r.date), dateISO: r.date || "",
+        client: Store.clientName(r.clientId) || r.sourceOther || "—",
+        wo: w ? (w.woNumber || w.projectNumber || "") : "",
+        amount: Number(r.amount) || 0,
+        split: SCHEMA.describeSplit(src),
+        basis: { income: "entered on this payment", workOrder: "from the work order", settings: "office default" }[src.from] || "",
+        field: parts.find(p => p.state === src.workState && src.workState) || null,
+        office: parts.find(p => p.state === src.officeState && p.state !== src.workState) || null,
+        unassigned: !parts.length,
+      };
+    });
+
+    show(`Income by State — ${year}`, head("Income Sourced by State (for state returns)", year) +
+      `<p style="font-size:12.5px;color:var(--text-2)">Each job is split between the state the inspection was physically performed in and ${U.escapeHtml(s.officeState || "the office state")}, where the research, analysis, and report write-up are done. The default split is ${s.defaultFieldWorkPct ?? 50}% field / ${100 - (s.defaultFieldWorkPct ?? 50)}% office and can be overridden on any work order or payment. <strong>These are the owner's records of where the work was performed — the CPA determines actual state sourcing, filing thresholds, nexus, and credits for taxes paid to other states.</strong></p>` +
+      H("Summary by state") +
+      tbl([
+        { label: "State", value: r => `${r.state} — ${r.name}` },
+        { label: "Allocations", value: r => r.entries, num: true },
+        { label: "% of gross", value: r => sum.total ? U.pct(r.amount / sum.total * 100, 1) : "—", num: true },
+        { label: "Income sourced", value: r => U.money(r.amount), num: true },
+      ], sum.states, {
+        totalRow: ["TOTAL SOURCED", "", "", U.money(U.sum(sum.states, r => r.amount))],
+      }) +
+      (sum.unassigned.entries
+        ? `<p style="font-size:12.5px;color:var(--red);margin-top:6px"><strong>${sum.unassigned.entries} entr${sum.unassigned.entries === 1 ? "y" : "ies"} totalling ${U.money(sum.unassigned.amount)} could not be sourced</strong> — set the field state on the work order (or on the payment), and set your office state in Settings.</p>`
+        : `<p style="font-size:12.5px;color:var(--green);margin-top:6px">Every income entry for ${year} is sourced to a state. ✓</p>`) +
+      H("Detail — every payment") +
+      tbl([
+        { label: "Date", value: r => r.date },
+        { label: "Client / source", value: r => r.client },
+        { label: "WO #", value: r => r.wo || "—" },
+        { label: "Amount", value: r => U.money(r.amount), num: true },
+        { label: "Split", value: r => r.unassigned ? "NOT SOURCED" : r.split },
+        { label: "Field state $", value: r => r.field ? U.money(r.field.amount) : "—", num: true },
+        { label: "Office state $", value: r => r.office ? U.money(r.office.amount) : "—", num: true },
+        { label: "Basis", value: r => r.basis },
+      ], detail, { totalRow: ["TOTAL", "", "", U.money(U.sum(detail, r => r.amount)), "", "", "", ""] }),
+      { name: `income-by-state-${year}.csv`, content: U.toCSV(detail, [
+        { key: "dateISO", label: "Date" }, { key: "client", label: "Client / Source" }, { key: "wo", label: "Work Order" },
+        { key: "amount", label: "Amount" }, { key: "split", label: "State Split" },
+        { label: "Field State", value: r => r.field ? r.field.state : "" },
+        { label: "Field State Amount", value: r => r.field ? r.field.amount : "" },
+        { label: "Office State", value: r => r.office ? r.office.state : "" },
+        { label: "Office State Amount", value: r => r.office ? r.office.amount : "" },
+        { key: "basis", label: "Sourcing Basis" },
+      ]) });
+  }
+
   function scheduleCSummary(year) {
     const d = Store.yearData(year);
     const map = {};
@@ -321,6 +378,7 @@ const Reports = (() => {
     const d = Store.yearData(year);
     const cpa = Alerts.cpaScore(year);
     const recon = Alerts.reconcile1099(year);
+    const stateSum = Store.stateIncomeSummary(year);
     const byLine = {};
     for (const e of d.expenses) {
       const line = SCHEMA.scheduleCFor(e.category);
@@ -354,43 +412,53 @@ const Reports = (() => {
         ["Other income", U.money(U.sum(d.income.filter(i => !i.is1099), i => i.amount))],
         ["Income entries", String(d.income.length)],
       ]) +
-      H("3. 1099 reconciliation") +
+      H("3. Income sourced by state") +
+      `<p style="font-size:12.5px;color:var(--text-2);margin:0 0 6px">Work is performed in more than one state: inspections on site, and research, analysis, and report write-up at the ${U.escapeHtml(S.settings.officeState || "office")} office. Default split ${S.settings.defaultFieldWorkPct ?? 50}% field / ${100 - (S.settings.defaultFieldWorkPct ?? 50)}% office, overridable per job. <strong>Owner's record of where work was performed — state filing requirements, nexus, apportionment, and credits are the CPA's determination.</strong></p>` +
+      tbl([
+        { label: "State", value: r => `${r.state} — ${r.name}` },
+        { label: "% of gross", value: r => stateSum.total ? U.pct(r.amount / stateSum.total * 100, 1) : "—", num: true },
+        { label: "Income sourced", value: r => U.money(r.amount), num: true },
+      ], stateSum.states, { totalRow: ["TOTAL SOURCED", "", U.money(U.sum(stateSum.states, r => r.amount))] }) +
+      (stateSum.unassigned.entries
+        ? `<p style="font-size:12.5px;color:var(--red);margin-top:4px">${stateSum.unassigned.entries} entr${stateSum.unassigned.entries === 1 ? "y" : "ies"} (${U.money(stateSum.unassigned.amount)}) not yet sourced to a state.</p>`
+        : "") +
+      H("4. 1099 reconciliation") +
       tbl([
         { label: "Client", value: r => r.clientName }, { label: "1099 received", value: r => r.received ? "Yes" : "No" },
         { label: "1099 amt", value: r => U.money(r.amountReceived), num: true }, { label: "App income", value: r => U.money(r.appTotal), num: true },
         { label: "Diff", value: r => r.received ? U.money(r.difference) : "—", num: true },
       ], recon) +
-      H("4. Expense summary (Schedule C-style organizer)") +
+      H("5. Expense summary (Schedule C-style organizer)") +
       tbl([
         { label: "Organizer line", value: r => r.line }, { label: "Entries", value: r => r.count, num: true },
         { label: "Gross", value: r => U.money(r.gross), num: true }, { label: "Est. deductible", value: r => U.money(r.deductible), num: true },
       ], U.sortBy(Object.values(byLine), r => r.deductible, -1),
         { totalRow: ["TOTAL", "", U.money(U.sum(Object.values(byLine), r => r.gross)), U.money(t.deductibleExpenses)] }) +
-      H("5. Mileage") +
+      H("6. Mileage") +
       `<p style="font-size:12.5px">${U.num(t.mileageMiles, 0)} business miles × $${t.mileageRate.toFixed(2)} ≈ <strong>${U.money(t.mileageDeduction)}</strong> (standard-rate estimate). Full log available as a separate report. ${Alerts.mileageScore(year).score}% of trips fully substantiated.</p>` +
-      H("6. Assets purchased / in service") +
+      H("7. Assets purchased / in service") +
       tbl([
         { label: "Item", value: a => a.name }, { label: "Purchased", value: a => U.fmtDate(a.purchaseDate) },
         { label: "Cost", value: a => U.money(a.cost), num: true }, { label: "Biz %", value: a => (a.businessUsePct ?? 100) + "%", num: true },
         { label: "Depreciation status", value: a => a.depreciationStatus || "Not Reviewed" },
       ], S.assets) +
-      H("7. Home office") +
+      H("8. Home office") +
       `<p style="font-size:12.5px">${ho.usedRegularlyExclusively ? `Claimed regular & exclusive use. Office ${ho.officeSqFt} sq ft of ${ho.homeSqFt} sq ft home (${ho.officeSqFt && ho.homeSqFt ? U.pct(ho.officeSqFt / ho.homeSqFt * 100, 1) : "—"}). Simplified est. ${U.money(Math.min(ho.officeSqFt || 0, 300) * 5)}. Monthly actuals recorded: utilities ${U.money(ho.utilities)}, internet ${U.money(ho.internet)}, insurance ${U.money(ho.insurance)}, repairs ${U.money(ho.repairs)}. Notes: ${U.escapeHtml(ho.cpaNotes || "—")}` : "Not claimed / not configured."}</p>` +
-      H("8. Contractor payments") +
+      H("9. Contractor payments") +
       tbl([
         { label: "Contractor", value: c => c.name }, { label: "W-9", value: c => c.w9Received ? "Yes" : "NO" },
         { label: `Paid ${year}`, value: c => U.money(Contractors.paidYtd(c, year)), num: true },
       ], S.contractors.filter(c => Contractors.paidYtd(c, year) > 0)) +
-      H("9. Quarterly estimated payments") +
+      H("10. Quarterly estimated payments") +
       tbl([
         { label: "Date", value: p => U.fmtDate(p.date) }, { label: "Q", value: p => p.quarter },
         { label: "Jurisdiction", value: p => p.jurisdiction || "" }, { label: "Amount", value: p => U.money(p.amount), num: true },
       ], d.taxPayments, { totalRow: ["TOTAL", "", "", U.money(t.taxPaymentsMade)] }) +
-      H("10. Missing documentation") +
+      H("11. Missing documentation") +
       (missing.length ? missing.map(a => `<p style="font-size:12.5px;margin:3px 0">• ${U.escapeHtml(a.title)}: <strong>${a.count}</strong></p>`).join("") : `<p style="font-size:12.5px">None — documentation complete. ✓</p>`) +
-      H("11. Items flagged for CPA review") +
+      H("12. Items flagged for CPA review") +
       (flagged.length ? flagged.map(f => `<p style="font-size:12.5px;margin:3px 0">• ${U.escapeHtml(f)}</p>`).join("") : `<p style="font-size:12.5px">None flagged.</p>`) +
-      H("12. Assumptions used in estimates") +
+      H("13. Assumptions used in estimates") +
       `<p style="font-size:12.5px">SE tax ${S.settings.seTaxRatePct}% of 92.35% of net · Federal reserve ${S.settings.federalReservePct}% · State reserve ${S.settings.stateReservePct}% · Mileage $${Store.mileageRate(year).toFixed(2)}/mi. All figures are bookkeeping estimates prepared by the owner, not tax determinations.</p>`);
     // mark checklist item
     const yc = S.yearChecklists[String(year)] = S.yearChecklists[String(year)] || {};
@@ -429,7 +497,7 @@ const Reports = (() => {
 
   return {
     checklistItems, show,
-    plByMonth, incomeByClient, incomeByService, scheduleCSummary, expenseDetail, mileageReport,
+    plByMonth, incomeByClient, incomeByService, incomeByState, scheduleCSummary, expenseDetail, mileageReport,
     workOrderStatus, invoiceReport, reimbursablesReport, missingDocs, assetReport, contractorReport,
     taxPaymentReport, recon1099Report, homeOfficeReport, cpaPacket, auditPacket,
   };
@@ -444,6 +512,7 @@ Views.reports = {
         { icon: "📈", label: "Profit & Loss (by month + year)", sub: "Income, expenses, mileage, net", fn: () => Reports.plByMonth(year) },
         { icon: "🏢", label: "Income by client", sub: "With 1099 portions", fn: () => Reports.incomeByClient(year) },
         { icon: "🧰", label: "Income by service type", sub: "", fn: () => Reports.incomeByService(year) },
+        { icon: "📍", label: "Income by state", sub: "Which state's return each dollar belongs on", fn: () => Reports.incomeByState(year) },
         { icon: "🧾", label: "Invoice aging", sub: "All invoices with days late", fn: () => Reports.invoiceReport("aging") },
         { icon: "🔴", label: "Outstanding invoices", sub: "Open balances", fn: () => Reports.invoiceReport("outstanding") },
         { icon: "✅", label: "Paid invoices", sub: "", fn: () => Reports.invoiceReport("paid") },
