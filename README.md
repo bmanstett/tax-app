@@ -66,12 +66,12 @@ Clear it anytime: **Settings → Clear ALL data**, then start fresh.
 | Section | What it does |
 |---|---|
 | **Dashboard** | YTD income/expenses/net, **pending fees from work orders not yet invoiced**, tax reserve estimates, invoice aging, readiness scores, "what needs attention" — every item is tappable and lands where the fix is, including **side-by-side duplicate review** (compare both copies, delete the extra, or keep both) and **one-tap payment-record completion** for invoices marked paid without a date/method |
-| **Work Orders** | Full forensic-engineering job tracker (claim/policy/CAT, insured, loss location, scope, fees, remittance) with **one-tap status changes** (tap the status badge in the list, or the status pipeline in the job detail — dates like report-submitted/invoice/payment are stamped automatically), due-date alerts, quick actions (add mileage/expense/receipt, create invoice, duplicate, export summary), **mileage reimbursable per-mile or as a flat fee** (flows into invoices automatically), and **hands-free status flow** — marking an invoice Sent moves the job to Invoiced; a paid invoice or matching income entry closes it — plus **📄 Import FCGA PDF**: drop an FCGA "Engineer Work Order Form" PDF and every field is parsed into a pre-filled work order (see below) |
+| **Work Orders** | Full forensic-engineering job tracker (claim/policy/CAT, insured, loss location, scope, fees, remittance) with **one-tap status changes** (tap the status badge in the list, or the status pipeline in the job detail — dates like report-submitted/invoice/payment are stamped automatically), due-date alerts, quick actions (add mileage/expense/receipt, create invoice, duplicate, export summary), **🧭 Directions** on every job (copies the loss address and opens Google Maps ready to drive), **mileage reimbursable per-mile or as a flat fee** (flows into invoices automatically), and **hands-free status flow** — marking an invoice Sent moves the job to Invoiced; a paid invoice or matching income entry closes it — plus **📄 Import FCGA PDF**: drop an FCGA "Engineer Work Order Form" PDF and every field is parsed into a pre-filled work order (see below) |
 | **Clients** | Rates, terms, W-9/1099 flags, profitability, average payment time, 1099 reconciliation status |
-| **Invoices** | Flat/hourly billing + mileage & expense reimbursements, aging, partial payments, printable invoice, income reconciliation. Marking one paid (or closing its work order) fills the **payment date with that day and the method with ACH / Direct Deposit** unless you set them yourself |
+| **Invoices** | Flat/hourly billing + mileage & expense reimbursements, aging, partial payments, printable invoice, income reconciliation. Marking one paid (or closing its work order) fills the **payment date with that day and the method with ACH / Direct Deposit** unless you set them yourself, and **logs the home-office round trip to the loss location as mileage** |
 | **Income** | All money in, 1099 tracking, **state sourcing** (which state's return each dollar belongs on — see below), and the **1099 Reconciliation tool** (compare 1099s received vs. recorded income) |
 | **Expenses** | Schedule C-style categories, business purpose, **receipt upload right on the expense form** (📷 Take photo / 📁 Choose file with preview) plus **one-tap 📎 Attach on every expense row/card** — no need to open the form; attached receipts open in a viewer from the list; business-use %, reimbursable tracking, CPA-review flags |
-| **Mileage** | Field-optimized **⚡ Quick trip** logging, odometer support, per-year IRS rate, substantiation score, CSV log export |
+| **Mileage** | Field-optimized **⚡ Quick trip** logging, **automatic round trips on paid jobs** (badged “Auto” — distance routed from your home base to the loss location), odometer support, per-year IRS rate, substantiation score, CSV log export |
 | **Receipts** | Attach photos/PDFs (stored locally in IndexedDB) or reference cloud/paper locations; missing-receipt report |
 | **Assets** | Equipment purchases flagged for depreciation / Section 179 CPA review |
 | **Home Office** | Square footage, simplified/actual-method inputs, CPA notes — organizer only |
@@ -79,7 +79,7 @@ Clear it anytime: **Settings → Clear ALL data**, then start fresh.
 | **Taxes** | Quarterly estimated payment tracker with due dates, configurable reserve percentages, year-end checklist, **year lock** |
 | **Reports** | 20+ printable reports incl. the **CPA Year-End Packet** and **IRS Audit-Readiness Packet** (Print → Save as PDF) |
 | **Audit Trail** | Field-level before/after history of every create/edit/delete |
-| **Settings** | Business profile (incl. office state + default field-work split), tax assumptions, mileage rates by year, JSON backup/restore, integrity check, duplicate review, paid-invoice payment-info completion, work-state backfill |
+| **Settings** | Business profile (incl. office state + default field-work split), tax assumptions, mileage rates by year, JSON backup/restore, integrity check, duplicate review, paid-invoice payment-info completion, work-state backfill, mileage backfill for paid jobs, and the **app version + update check** |
 
 ## FCGA work order import
 
@@ -126,6 +126,44 @@ so the CPA can decide which state returns to file.
 Work-order forms show them as a labeled dropdown, and PDF imports pick the form's PE number
 (or match the loss-location state if the form has none).
 
+## Mileage logs itself, and directions are one tap away
+
+**🧭 Directions** sits on every work order — on the list cards, in the table, and in the job
+detail. Tapping it copies the loss location to the clipboard *and* opens Google Maps with that
+address already loaded as the destination, so you can start driving (the copy is there in case
+you'd rather paste it somewhere else).
+
+**Mileage is logged for you when the money comes in.** The moment an invoice is marked Paid —
+or a work order is moved to Paid/Closed — the app routes your **home base → loss location**
+round trip and writes it into the mileage log, dated to the inspection, with the purpose,
+client, and work order filled in. Jobs where the client covers mileage are marked reimbursable
+and reimbursed (the paid invoice settled it). Nothing is logged twice: a job that already has a
+trip linked is left alone.
+
+- Set **Settings → Home base** to a full street address — that's where every trip starts.
+- Distances come from free OpenStreetMap services (Nominatim + OSRM, no API key, one lookup a
+  second). When a street number isn't on the map it falls back to the street, then the town, and
+  says so in the trip notes — check those.
+- Auto-logged trips carry an **Auto** badge in the mileage list. Review them and correct the
+  miles wherever you actually took a different route — they're an estimate, not a GPS track.
+- Jobs already in the app are caught up automatically on launch. To re-run it by hand (or retry
+  addresses that failed), use **Settings → Data health → 🚗 Log mileage for paid jobs**.
+
+## Shipping an update
+
+`js/version.js` holds the build stamp, and it's the only place to bump it:
+
+```js
+const APP_BUILD = { version: "2026.08.02-1", notes: "What changed." };
+```
+
+Bump it, then `git push` — that's the deploy. Every open copy of the app re-fetches that file in
+the background (on a timer, when you switch back to it, and when it comes back online). When the
+deployed stamp stops matching the running one, a banner offers **Sync & refresh**: it pushes this
+device's records, clears the caches, and reloads onto the new code. The banner disappears as soon
+as the app is up to date, and confirms with “✓ Updated to …”. **Settings → App version** shows what
+you're running and checks on demand.
+
 ## Data & backups
 
 - Auto-saves to `localStorage` after every change ("Saved…" indicator in the sidebar).
@@ -142,12 +180,14 @@ Vanilla HTML/CSS/JS. Zero dependencies. Hand-rolled SVG charts. Schema-driven fo
 ```
 index.html
 css/styles.css        design system, light/dark, responsive, print styles
-js/utils.js           helpers (dates, money, CSV, diff)
+js/version.js         the deployed build stamp — bump this on every deploy
+js/utils.js           helpers (dates, money, CSV, diff, geocoding/routing, clipboard)
 js/schemas.js         entity fields, categories, statuses, Schedule C mapping
 js/store.js           persistence, CRUD + audit trail, tax math, backup, IndexedDB
 js/charts.js          SVG bar/line/donut/score-ring/gauge charts
 js/ui.js              modals, toasts, form builder, list views
 js/alerts.js          attention engine + CPA/audit/health scores
+js/update.js          “new version is ready” banner (polls js/version.js)
 js/demo.js            sample data
 js/views/*.js         one file per section
 js/app.js             router, nav, quick-add, theme

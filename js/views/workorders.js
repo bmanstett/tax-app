@@ -122,6 +122,8 @@ const WO = (() => {
     UI.toast(`${w.woNumber || "Work order"} → ${status}${notes.length ? " · " + notes.join(" · ") : ""}`, "success");
     App.rerender();
     if (onDone) onDone(Store.get("workOrder", w.id));
+    // the money's in — log the drive to the loss location if it never got logged
+    if (["Paid", "Closed"].includes(status)) autoLogMileageOnPaid(w.id);
   }
 
   function openStatusSheet(w, opts) {
@@ -172,19 +174,173 @@ const WO = (() => {
 
   function routeStart() {
     const s = Store.state.settings;
-    return (s.homeBase && /\d/.test(s.homeBase)) ? s.homeBase : (s.businessAddress || s.homeBase || "").replace(/\n/g, ", ").trim();
+    return (s.homeBase && /\d/.test(s.homeBase)) ? s.homeBase : U.addressLine(s.businessAddress || s.homeBase || "");
   }
+
+  /** The job's loss location as a single-line address (blank when there isn't one). */
+  const lossAddress = w => U.addressLine(w && w.lossLocation);
 
   /** Auto-calculate a mileage reimbursement from the office → loss-location round trip. */
   async function calcRouteMileageReimb(w) {
     const from = routeStart();
     if (!from) throw new Error("Set your office address in Settings → Home base first");
-    const to = (w.lossLocation || "").split("\n").map(s => s.trim()).filter(Boolean).join(", ");
+    const to = lossAddress(w);
     if (!to) throw new Error("This work order has no loss-location address to route to");
     const oneWay = await U.drivingMiles(from, to);
     const miles = U.round2(oneWay * 2);
     const rate = mileageBillRate(w);
     return { oneWay: U.round2(oneWay), miles, rate, amount: U.round2(miles * rate) };
+  }
+
+  /* ---- directions: copy the address and open Google Maps ---- */
+
+  /** Copy the loss location and hand it to Google Maps, pre-loaded as the
+      destination. Both happen inside the tap so the phone doesn't block either. */
+  function openDirections(w) {
+    const to = lossAddress(w);
+    if (!to) { UI.toast("This work order has no loss-location address yet — add one under Insured & property", "error", 5000); return; }
+    const copying = U.copyText(to);                       // starts inside the user gesture
+    const url = U.mapsDirectionsUrl(to);
+    const win = window.open(url, "_blank", "noopener");    // ditto — never after an await
+    if (!win) location.href = url;                        // popup blocked: go there directly
+    copying.then(ok => UI.toast(ok
+      ? `📋 Copied — ${U.truncate(to, 40)} · opening Google Maps`
+      : `Opening Google Maps — ${U.truncate(to, 40)}`, "success", 4500));
+  }
+
+  /* ---- automatic mileage on payment ------------------------------------
+     The drive to a loss location is a deduction whether or not anyone
+     remembers to log it. Once a job's money is in, the home-office round
+     trip is calculated from the addresses and written to the mileage log. */
+
+  /** True once the job has actually been paid — a paid invoice, or the work
+      order itself moved to Paid/Closed. */
+  function isPaid(w) {
+    if (["Paid", "Closed"].includes(w.status)) return true;
+    return Store.state.invoices.some(i => i.workOrderId === w.id && i.status === "Paid");
+  }
+
+  /** The day the driving happened, best evidence first. The inspection is the
+      trip; the invoice dates are only a fallback for jobs logged after the fact. */
+  function tripDateFor(w) {
+    const inv = Store.state.invoices.filter(i => i.workOrderId === w.id && i.status === "Paid")[0];
+    return w.inspectionDate || w.reportSubmittedDate || w.dateAssigned ||
+      (inv && (inv.paymentDate || inv.invoiceDate)) || w.paymentDate || U.todayISO();
+  }
+
+  /** Jobs that are paid, have an address to route to, and no trip logged yet. */
+  function pendingAutoMileage() {
+    return Store.all("workOrder").filter(w =>
+      isPaid(w) && lossAddress(w) && !Store.state.mileage.some(m => m.workOrderId === w.id));
+  }
+
+  /* Jobs whose distance lookup is in the air right now. A lookup takes a couple
+     of seconds, and marking an invoice paid can fire this from more than one
+     place — without the guard both calls would pass the "no mileage yet" check
+     and the job would end up with the same trip logged twice. */
+  const inFlight = new Set();
+
+  /** Log the home-office → loss-location round trip for one paid job.
+      Idempotent: a job that already has any trip linked is left alone.
+      → {status: "logged"|"skipped"|"failed", reason?, trip?, miles?, oneWay?} */
+  async function autoLogMileage(w) {
+    w = Store.get("workOrder", w.id) || w;
+    if (!isPaid(w)) return { status: "skipped", reason: "not paid yet" };
+    if (Store.state.mileage.some(m => m.workOrderId === w.id)) return { status: "skipped", reason: "mileage already logged" };
+    if (inFlight.has(w.id)) return { status: "skipped", reason: "already being calculated" };
+    const to = lossAddress(w);
+    if (!to) return { status: "failed", reason: "no loss-location address on the work order" };
+    const from = routeStart();
+    if (!from) return { status: "failed", reason: "no home base set in Settings" };
+    const date = tripDateFor(w);
+    if (Store.isYearLocked(U.yearOf(date))) return { status: "skipped", reason: `tax year ${U.yearOf(date)} is locked` };
+
+    inFlight.add(w.id);
+    let route;
+    try { route = await U.drivingRoute(from, to); }
+    finally { inFlight.delete(w.id); }
+    if (Store.state.mileage.some(m => m.workOrderId === w.id)) return { status: "skipped", reason: "mileage already logged" };
+
+    const oneWay = U.round2(route.miles);
+    const miles = U.round2(oneWay * 2);
+    const billed = !!w.mileageAllowed;   // the client agreed to cover it, and the job is paid
+    const trip = Store.add("mileage", {
+      date, tripType: "Inspection",
+      startLocation: from, destination: to, roundTrip: true, miles,
+      businessPurpose: `${w.jobType || "Site"} inspection — ${w.woNumber || "work order"}${w.claimNumber ? ", claim " + w.claimNumber : ""}`,
+      clientId: w.clientId || "", workOrderId: w.id,
+      reimbursable: billed, reimbursed: billed,
+      autoLogged: true, autoApprox: !!route.approx,
+      notes: `Auto-logged when this job was paid — round trip from the home office, ${U.num(oneWay, 1)} mi each way by road.` +
+        (route.approx ? ` The exact street number wasn't on the map, so this routes to ${U.truncate(route.matchedTo, 60)} — check the miles.` : " Edit the miles if the actual route differed."),
+    });
+    if (!trip) return { status: "failed", reason: "the trip could not be saved" };
+    return { status: "logged", trip, miles, oneWay, approx: !!route.approx };
+  }
+
+  /* Addresses that couldn't be routed are parked here so the background sweep
+     doesn't re-try (and re-nag) on every launch. Per-browser, never synced —
+     "Log mileage for paid jobs" in Settings → Data health clears it and retries. */
+  const SKIP_KEY = "anstett_automileage_skip";
+  const skipList = () => { try { return JSON.parse(localStorage.getItem(SKIP_KEY)) || []; } catch (e) { return []; } };
+  function skipAdd(id, reason) {
+    const next = skipList().filter(x => x.id !== id).concat([{ id, reason, at: U.nowISO() }]);
+    try { localStorage.setItem(SKIP_KEY, JSON.stringify(next.slice(-300))); } catch (e) { /* full — no matter */ }
+  }
+  const skipClear = () => { try { localStorage.removeItem(SKIP_KEY); } catch (e) { /* no matter */ } };
+
+  /** Work through every paid job missing its mileage, one at a time.
+      → {total, logged, miles, skipped, failed:[{wo, reason}]} */
+  async function backfillPaidMileage({ onProgress, useSkipList = false } = {}) {
+    const skipped = new Set(useSkipList ? skipList().map(x => x.id) : []);
+    const todo = pendingAutoMileage().filter(w => !skipped.has(w.id));
+    const out = { total: todo.length, logged: 0, miles: 0, approx: 0, skipped: 0, failed: [] };
+    let n = 0;
+    for (const w of todo) {
+      if (onProgress) onProgress(++n, todo.length, w);
+      try {
+        const r = await autoLogMileage(w);
+        if (r.status === "logged") { out.logged++; out.miles = U.round2(out.miles + r.miles); if (r.approx) out.approx++; }
+        else { out.skipped++; if (r.status === "failed") { out.failed.push({ wo: w, reason: r.reason }); skipAdd(w.id, r.reason); } }
+      } catch (e) {
+        out.failed.push({ wo: w, reason: e.message });
+        skipAdd(w.id, e.message);
+      }
+    }
+    return out;
+  }
+
+  /** One job, in the background, right after it was marked paid. */
+  function autoLogMileageOnPaid(wOrId) {
+    const w = typeof wOrId === "string" ? Store.get("workOrder", wOrId) : wOrId;
+    if (!w || !pendingAutoMileage().some(x => x.id === w.id)) return;
+    UI.toast("🚗 Calculating this job's round-trip mileage…");
+    autoLogMileage(w).then(r => {
+      if (r.status === "logged") {
+        UI.toast(`🚗 Mileage logged — ${U.num(r.miles, 1)} mi round trip from the home office ≈ ${U.money(Store.tripDeduction(r.trip))} deduction`, "success", 6000);
+        App.rerenderIfIdle();   // never rebuild the page under a half-typed form
+      } else if (r.status === "failed") {
+        UI.toast(`Mileage not auto-logged (${r.reason}) — add the trip from the work order`, "error", 6000);
+      }
+    }).catch(e => UI.toast(`Mileage not auto-logged (${e.message}) — add the trip from the work order`, "error", 6000));
+  }
+
+  /** Startup sweep: catch up any paid job whose trip was never logged — jobs
+      entered before this existed, imported, or synced in from another device. */
+  async function autoMileageSweep() {
+    if (!routeStart()) return null;                       // no office address to route from
+    const todo = pendingAutoMileage().filter(w => !skipList().some(x => x.id === w.id));
+    if (!todo.length) return null;
+    UI.toast(`🚗 Logging round-trip mileage for ${todo.length} paid job${todo.length > 1 ? "s" : ""}…`, "default", 4000);
+    const res = await backfillPaidMileage({ useSkipList: true });
+    if (res.logged) {
+      UI.toast(`🚗 Logged ${res.logged} trip${res.logged > 1 ? "s" : ""} — ${U.num(res.miles, 0)} mi from the home office. Review them under Mileage.`, "success", 7000);
+      App.rerenderIfIdle();
+    }
+    if (res.failed.length) {
+      UI.toast(`${res.failed.length} job${res.failed.length > 1 ? "s" : ""} couldn't be routed — see Settings → Data health`, "error", 6000);
+    }
+    return res;
   }
 
   function createInvoiceFrom(w, detailModal) {
@@ -292,6 +448,7 @@ const WO = (() => {
           ${SCHEMA.workOrderStatuses.map(s => `<button type="button" class="status-chip badge-${s.color}${s.value === w.status ? " current" : ""}" data-status="${U.escapeHtml(s.value)}">${U.escapeHtml(s.value)}</button>`).join("")}
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px" id="wo-actions">
+          ${lossAddress(w) ? `<button class="btn btn-sm btn-go" data-act="directions" title="Copy the loss location and open Google Maps">🧭 Directions</button>` : ""}
           <button class="btn btn-sm btn-primary" data-act="edit">✏️ Edit</button>
           <button class="btn btn-sm" data-act="mileage">🚗 Add mileage</button>
           <button class="btn btn-sm" data-act="expense">💳 Add expense</button>
@@ -415,6 +572,7 @@ const WO = (() => {
       if (!act) return;
       const presets = { workOrderId: w.id, clientId: w.clientId };
       switch (act) {
+        case "directions": openDirections(w); break;
         case "edit": m.close(); openEditor(w); break;
         case "mileage":
           UI.openForm("mileage", null, { presets: { ...presets, businessPurpose: `Inspection — ${w.jobType || "site"} (${w.woNumber || ""})`.trim(), destination: (w.lossLocation || "").split("\n")[0], reimbursable: !!w.mileageAllowed },
@@ -439,7 +597,8 @@ const WO = (() => {
     });
   }
 
-  return { openEditor, openDetail, duplicate, createInvoiceFrom, warnings, jobFinancials, feeText, linked, changeStatus, openStatusSheet, expectedFee, isPendingInvoice, billingState, calcRouteMileageReimb, mileageBillRate, stateSource, stateSplitText };
+  return { openEditor, openDetail, duplicate, createInvoiceFrom, warnings, jobFinancials, feeText, linked, changeStatus, openStatusSheet, expectedFee, isPendingInvoice, billingState, calcRouteMileageReimb, mileageBillRate, stateSource, stateSplitText,
+    lossAddress, openDirections, isPaid, tripDateFor, pendingAutoMileage, autoLogMileage, autoLogMileageOnPaid, backfillPaidMileage, autoMileageSweep, skipList, skipClear, routeStart };
 })();
 
 Views.workorders = {
@@ -453,13 +612,18 @@ Views.workorders = {
 
     el.querySelector("#wo-add").addEventListener("click", () => WO.openEditor(null));
     el.querySelector("#wo-import").addEventListener("click", () => ImportWO.openImportModal());
-    // tap a status badge → bottom sheet with all stages
     el.querySelector("#wo-list").addEventListener("click", e => {
-      const t = e.target.closest("[data-wo-status]");
-      if (!t) return;
-      const w = Store.get("workOrder", t.getAttribute("data-wo-status"));
-      if (w) WO.openStatusSheet(w);
+      // tap a status badge → bottom sheet with all stages
+      const s = e.target.closest("[data-wo-status]");
+      if (s) { const w = Store.get("workOrder", s.getAttribute("data-wo-status")); if (w) WO.openStatusSheet(w); return; }
+      // tap 🧭 → copy the loss location and open Google Maps
+      const d = e.target.closest("[data-wo-go]");
+      if (d) { const w = Store.get("workOrder", d.getAttribute("data-wo-go")); if (w) WO.openDirections(w); }
     });
+
+    const goBtn = (w, label) => WO.lossAddress(w)
+      ? `<button type="button" class="btn-go" data-lv-stop data-wo-go="${w.id}" title="Copy the address and open Google Maps">🧭${label ? " " + label : ""}</button>`
+      : (label ? "" : "—");
 
     UI.listView(el.querySelector("#wo-list"), {
       data: () => Store.all("workOrder"),
@@ -503,6 +667,7 @@ Views.workorders = {
           }, sortVal: w => w.reportDueDate || "" },
         { label: "Fee", value: w => WO.feeText(w), sortVal: w => Number(w.flatFee) || Number(w.hourlyRate) || 0, num: true },
         { label: "⚠", html: w => WO.warnings(w).map(x => `<span title="${U.escapeHtml(x.text)}">${x.color === "red" ? "🔴" : "🟡"}</span>`).join("") || "", sortVal: w => WO.warnings(w).length },
+        { label: "Go", html: w => goBtn(w), sortVal: w => WO.lossAddress(w) ? 0 : 1 },
       ],
       defaultSort: { col: 5, dir: -1 },
       rowClass: w => WO.warnings(w).length ? "row-warn" : "",
@@ -516,6 +681,7 @@ Views.workorders = {
           </div>
           <div class="record-card-sub">${U.escapeHtml(Store.clientName(w.clientId))} · ${U.escapeHtml(U.truncate(w.insuredName || w.lossLocation || "", 36))}</div>
           <div class="record-card-meta">
+            ${goBtn(w, "Directions")}
             ${w.reportDueDate ? UI.badge(`Due ${U.fmtDateShort(w.reportDueDate)}`, SCHEMA.woOpenStatuses.includes(w.status) && U.daysFromToday(w.reportDueDate) < 0 ? "red" : "slate") : ""}
             ${w.workState ? UI.badge("📍 " + WO.stateSplitText(w), "purple") : ""}
             ${UI.badge(WO.feeText(w), "blue")}

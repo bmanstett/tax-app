@@ -60,6 +60,17 @@
   <!-- ===== Quick add FAB ===== -->
   <button class="fab" id="fab" title="Quick add" aria-label="Quick add">+</button>
 
+  <!-- ===== App update available ===== -->
+  <div id="update-banner" class="update-banner" hidden>
+    <span class="ub-icon">🔄</span>
+    <div class="ub-text">
+      <strong>App update available</strong>
+      <span id="ub-note"></span>
+    </div>
+    <button class="btn btn-sm btn-primary" id="ub-refresh">Sync &amp; refresh</button>
+    <button class="btn btn-ghost btn-icon" id="ub-later" title="Later" aria-label="Dismiss until next launch">✕</button>
+  </div>
+
   <!-- ===== Overlays ===== -->
   <div id="modal-root"></div>
   <div id="sheet-root"></div>
@@ -69,13 +80,15 @@
 <!-- Print isolation: documents are cloned in here and ONLY this prints -->
 <div id="print-root"></div>
 
-<!-- Order matters: utils → schemas → store → charts → ui → alerts → demo → views → app -->
+<!-- Order matters: version → utils → schemas → store → charts → ui → alerts → demo → views → app -->
+<script src="js/version.js"></script>
 <script src="js/utils.js"></script>
 <script src="js/schemas.js"></script>
 <script src="js/store.js"></script>
 <script src="js/sync.js"></script>
 <script src="js/charts.js"></script>
 <script src="js/ui.js"></script>
+<script src="js/update.js"></script>
 <script src="js/pdftext.js"></script>
 <script src="js/importwo.js"></script>
 <script src="js/alerts.js"></script>

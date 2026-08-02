@@ -151,6 +151,14 @@ Views.settings = {
           </div>
 
           <div class="card">
+            <div class="card-title">🔄 App version</div>
+            <div class="card-sub">Running <strong>${U.escapeHtml(AppUpdate.version || "—")}</strong>. New versions load automatically the next time you open the app — this checks right now, and the banner tells you when one is waiting.</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn" id="st-check-update">Check for updates</button>
+            </div>
+          </div>
+
+          <div class="card">
             <div class="card-title">🩺 Data health</div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
               <button class="btn" id="st-integrity">Run integrity check</button>
@@ -158,6 +166,7 @@ Views.settings = {
               <button class="btn" id="st-fix-paid">Complete paid-invoice payment info</button>
               <button class="btn" id="st-fix-incdates">Sync income dates to invoice payments</button>
               <button class="btn" id="st-fix-states">Set work states from loss locations</button>
+              <button class="btn" id="st-fix-mileage">🚗 Log mileage for paid jobs</button>
             </div>
             <div class="hint" style="font-size:11.5px;color:var(--text-3);margin-bottom:8px">“Sync income dates” re-dates each invoice-linked income entry to that invoice’s <strong>payment date</strong>, so the monthly income / net-profit charts land in the month the invoice was actually paid. (Set the payment date on each invoice first.)</div>
             <div id="st-health-out"></div>
@@ -384,6 +393,43 @@ Views.settings = {
         (unreadable.length ? `<div class="hint" style="font-size:12px;color:var(--amber);margin-top:5px">No state found in the address for: ${U.escapeHtml(unreadable.slice(0, 12).join(", "))}${unreadable.length > 12 ? ` and ${unreadable.length - 12} more` : ""} — set those by hand on each work order.</div>` : "") +
         `<div class="hint" style="font-size:12px;color:var(--text-3);margin-top:5px">Review each job afterwards: this reads the address only, so a job you inspected somewhere other than the loss address needs a manual fix.</div>`;
       if (filled) { UI.toast(`Set the work state on ${filled} work order${filled > 1 ? "s" : ""}`, "success"); App.refreshNav(); }
+    });
+    // backfill: home-office round trip on every paid job that has no mileage logged
+    g("#st-fix-mileage").addEventListener("click", async () => {
+      const btn = g("#st-fix-mileage");
+      const out = g("#st-health-out");
+      if (!WO.routeStart()) {
+        out.innerHTML = `<div style="font-size:12.5px;color:var(--red);font-weight:700">Set your <strong>Home base</strong> (a full street address) in the Business profile above first — that's where every trip starts from.</div>`;
+        return;
+      }
+      WO.skipClear();  // retry anything a background sweep gave up on
+      const todo = WO.pendingAutoMileage();
+      if (!todo.length) {
+        out.innerHTML = `<div style="font-size:13px;color:var(--green);font-weight:700">✓ Every paid job with a loss location already has its mileage logged.</div>`;
+        return;
+      }
+      btn.disabled = true;
+      const label = btn.textContent;
+      const res = await WO.backfillPaidMileage({
+        onProgress: (n, total, w) => {
+          btn.textContent = `Calculating ${n}/${total}…`;
+          out.innerHTML = `<div style="font-size:12.5px;color:var(--text-2)">Routing ${U.escapeHtml(w.woNumber || "work order")} — ${n} of ${total}. Each address is looked up once a second (free OpenStreetMap routing), so this takes a moment.</div>`;
+        },
+      });
+      btn.disabled = false; btn.textContent = label;
+      out.innerHTML =
+        `<div style="font-size:13px;font-weight:700;color:${res.logged ? "var(--green)" : "var(--text-2)"}">${res.logged
+          ? `✓ Logged ${res.logged} round trip${res.logged > 1 ? "s" : ""} from your home office — ${U.num(res.miles, 0)} miles total. Review them under Mileage and adjust any where you took a different route.`
+          : "No trips were logged."}</div>` +
+        (res.failed.length ? `<div class="hint" style="font-size:12px;color:var(--amber);margin-top:5px">Couldn't route ${res.failed.length} job(s): ${U.escapeHtml(res.failed.slice(0, 8).map(f => `${f.wo.woNumber || "(unnumbered)"} — ${f.reason}`).join(" · "))}${res.failed.length > 8 ? ` and ${res.failed.length - 8} more` : ""}. Fix the loss-location address on those, or log the trip by hand.</div>` : "") +
+        `<div class="hint" style="font-size:12px;color:var(--text-3);margin-top:5px">From now on this happens on its own: mark an invoice paid and the round trip is logged for you.</div>`;
+      if (res.logged) { UI.toast(`Logged ${res.logged} trip${res.logged > 1 ? "s" : ""} — ${U.num(res.miles, 0)} mi`, "success", 5000); App.refreshNav(); }
+    });
+    g("#st-check-update").addEventListener("click", async () => {
+      const btn = g("#st-check-update");
+      btn.disabled = true; btn.textContent = "Checking…";
+      await AppUpdate.check({ silent: false });
+      btn.disabled = false; btn.textContent = "Check for updates";
     });
     g("#st-dupes").addEventListener("click", () => {
       const dupes = Store.findDuplicates();

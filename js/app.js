@@ -236,9 +236,13 @@ const App = (() => {
     });
 
     render();
+    AppUpdate.init();
 
     // complete any paid invoice still missing its payment date/method
     setTimeout(() => { if (tidyData({ announce: true }).length) render(); }, 600);
+
+    // and log the home-office round trip on any paid job that never got one
+    setTimeout(() => WO.autoMileageSweep().catch(e => console.warn("Mileage sweep failed:", e)), 2500);
 
     // first-run experience
     const hasData = Store.state.workOrders.length || Store.state.expenses.length || Store.state.income.length || Store.state.clients.length;

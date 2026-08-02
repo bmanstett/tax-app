@@ -79,6 +79,14 @@ const Invoices = (() => {
     return fixed;
   }
 
+  /** A paid invoice means the trip to that loss location definitely happened —
+      log the home-office round trip if it never got recorded. Runs in the
+      background (the distance comes off a routing service) and is a no-op for
+      jobs that already have mileage. */
+  function autoLogWorkOrderMileage(inv) {
+    if (inv && inv.status === "Paid" && inv.workOrderId) WO.autoLogMileageOnPaid(inv.workOrderId);
+  }
+
   /** Cascade invoice status to the linked work order:
       Sent → WO "Invoiced" · Paid → WO "Closed" (dates stamped). */
   function syncWorkOrder(inv) {
@@ -109,7 +117,7 @@ const Invoices = (() => {
           if (!vals.paymentMethod) vals.paymentMethod = DEFAULT_PAYMENT_METHOD;
         }
         const saved = rec ? Store.update("invoice", rec.id, vals) : Store.add("invoice", vals);
-        if (saved) { syncWorkOrder(saved); syncIncomeDates(saved); }
+        if (saved) { syncWorkOrder(saved); syncIncomeDates(saved); autoLogWorkOrderMileage(saved); }
         // reconcile: if just marked paid, offer to log income (incl. any bonus)
         if (saved && saved.status === "Paid" && paid > 0) {
           const already = Store.state.income.some(i => i.invoiceId === saved.id && i.category !== BONUS_CATEGORY);
@@ -205,7 +213,7 @@ const Invoices = (() => {
       patch.paymentMethod = inv.paymentMethod || DEFAULT_PAYMENT_METHOD;
     }
     const saved = Store.update("invoice", inv.id, patch);
-    if (saved) { syncWorkOrder(saved); syncIncomeDates(saved); }
+    if (saved) { syncWorkOrder(saved); syncIncomeDates(saved); autoLogWorkOrderMileage(saved); }
     if (status === "Paid" && saved && !Store.state.income.some(i => i.invoiceId === inv.id)) offerIncome(saved);
     UI.toast(`Marked ${status.toLowerCase()}`, "success");
     App.rerender();
@@ -336,7 +344,7 @@ const Invoices = (() => {
     });
   }
 
-  return { openEditor, openDetail, preview, markStatus, agingBucket, syncWorkOrder, verifiedBadge, offerBonusIncome, syncIncomeDates,
+  return { openEditor, openDetail, preview, markStatus, agingBucket, syncWorkOrder, verifiedBadge, offerBonusIncome, syncIncomeDates, autoLogWorkOrderMileage,
     paymentDateGuess, paymentDefaults, applyPaymentDefaults, needingPaymentInfo, backfillPaymentInfo, DEFAULT_PAYMENT_METHOD };
 })();
 

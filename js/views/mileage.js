@@ -166,6 +166,7 @@ Views.mileage = {
             (!String(r.businessPurpose || "").trim() || !String(r.destination || "").trim()) ? UI.badge("Incomplete", "red") : "",
             r.reimbursable && !r.reimbursed ? UI.badge("Bill client", "amber") : "",
             r.roundTrip ? UI.badge("RT", "slate") : "",
+            r.autoLogged ? UI.badge("Auto", "purple") : "",
           ].join(" ") },
       ],
       defaultSort: { col: 0, dir: -1 },
@@ -181,6 +182,7 @@ Views.mileage = {
           ${(!String(r.businessPurpose || "").trim() || !String(r.destination || "").trim()) ? UI.badge("Incomplete", "red") : ""}
           ${r.workOrderId ? UI.badge(Store.woLabel(r.workOrderId), "slate") : ""}
           ${r.reimbursable && !r.reimbursed ? UI.badge("Bill client", "amber") : ""}
+          ${r.autoLogged ? UI.badge("Auto — check the route", "purple") : ""}
         </div>
       </div>`,
       empty: { icon: "🚗", title: "No trips logged", sub: "Use ⚡ Quick trip from the field — date, destination, miles, purpose. That's IRS-grade substantiation.", actionLabel: "⚡ Quick trip", actionId: "mi-empty-add", onAction: () => Mileage.quickTrip() },
