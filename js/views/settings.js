@@ -139,6 +139,17 @@ Views.settings = {
             `}
           </div>
 
+          <div class="card" id="st-inbox-card">
+            <div class="card-title">📥 Ledger — work-order inbox (this computer)</div>
+            ${!Inbox.supported() ? `
+              <div class="card-sub">Needs Chrome or Edge on the computer that holds your Work Orders folder. Your phone gets these work orders through sync.</div>
+            ` : `
+              <div class="card-sub" id="st-inbox-status">Checking…</div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px" id="st-inbox-actions"></div>
+              <div class="hint" style="font-size:11.5px;color:var(--text-3)">Dispatch (the intake agent) files each FCGA work-order email into <em>Work Orders\\CYxx\\P#…</em> with a <em>job.json</em>. The app picks those up when it opens, adds new work orders with the PDF attached, and applies FCGA revisions to fields you haven't changed yourself. Choose your <strong>Work Orders</strong> folder once; if the browser asks, pick <em>Allow on every visit</em>.</div>
+            `}
+          </div>
+
           <div class="card">
             <div class="card-title">💾 Backup & restore</div>
             <div class="card-sub">${s.lastBackupAt ? `Last backup: ${U.fmtDateTime(s.lastBackupAt)}` : "No backup exported yet"} ${Store.backupDue() ? UI.badge("Backup due", "amber") : UI.badge("Backed up recently", "green")}</div>
@@ -194,6 +205,35 @@ Views.settings = {
       </div>`;
 
     const g = id => el.querySelector(id);
+
+    // Work-order inbox card (filled in async: the remembered folder lives in IndexedDB)
+    async function paintInbox() {
+      const status = g("#st-inbox-status"), actions = g("#st-inbox-actions");
+      if (!status || !actions) return;
+      const name = await Inbox.folderName();
+      const last = Inbox.last;
+      const btn = (id, label, primary) => `<button class="btn ${primary ? "btn-primary" : ""}" id="${id}">${label}</button>`;
+      if (name === null) {
+        status.innerHTML = "Not set up on this computer yet.";
+        actions.innerHTML = btn("st-inbox-choose", "📁 Choose Work Orders folder", true);
+      } else {
+        const lastTxt = !last ? "Not checked yet this session."
+          : last.needsPermission ? `<span style="color:var(--amber);font-weight:700">Needs your OK — click Check now.</span>`
+          : last.error ? `<span style="color:var(--red);font-weight:700">${U.escapeHtml(last.error)}</span>`
+          : `Last check ${U.fmtDateTime(last.at)} — ${last.imported.length ? last.imported.map(r => U.escapeHtml(`${r.label}: ${r.kind}`)).join(", ") : "nothing new"}.`;
+        status.innerHTML = `Watching <strong>${U.escapeHtml(name)}</strong>. ${lastTxt}`;
+        actions.innerHTML = btn("st-inbox-scan", "📥 Check now", true) + btn("st-inbox-choose", "Change folder") + btn("st-inbox-off", "Stop watching");
+      }
+      const run = async fn => {
+        try { await fn(); } catch (e) { if (e && e.name !== "AbortError") UI.toast("Inbox: " + (e.message || e), "error", 6000); }
+        paintInbox();
+      };
+      const c = g("#st-inbox-choose"), sc = g("#st-inbox-scan"), off = g("#st-inbox-off");
+      if (c) c.addEventListener("click", () => run(() => Inbox.choose()));
+      if (sc) sc.addEventListener("click", () => run(() => Inbox.scan({ interactive: true })));
+      if (off) off.addEventListener("click", () => run(async () => { await Inbox.disconnect(); UI.toast("Inbox turned off on this computer"); }));
+    }
+    if (Inbox.supported()) paintInbox();
 
     // PE numbers editor — auto-saves on every change (no separate button needed)
     function readPeNumbers() {

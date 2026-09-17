@@ -237,6 +237,7 @@ const App = (() => {
 
     render();
     AppUpdate.init();
+    Inbox.init();   // work orders filed by the intake agent (desktop Chrome/Edge only)
 
     // complete any paid invoice still missing its payment date/method
     setTimeout(() => { if (tidyData({ announce: true }).length) render(); }, 600);

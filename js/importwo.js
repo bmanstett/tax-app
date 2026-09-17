@@ -14,6 +14,7 @@ const ImportWO = (() => {
     "Today's Date", "Project Number", "Field Engineer", "P.E.#", "FCGA COA#",
     "Client Company Name", "Client Address", "Client Contact Name", "Client Contact Phone",
     "Date of Loss", "Job Type", "Claim Number", "Policy Number", "Insurance Carrier",
+    "Insurance Company Carrier",
     "Cat Name/Number", "Insured Name", "Loss Location Address", "Insured Contact Name",
     "Main Phone Number", "Alt. Phone Number", "Cell Phone Number", "Insured Email",
     "Description of Loss", "Residential or Commercial", "Description of Property",
@@ -54,11 +55,12 @@ const ImportWO = (() => {
     return `${m[3]}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`;
   }
 
-  function moneyIn(v) {
+  function moneyIn(v, requireDollar = false) {
     const s = String(v || "");
     // prefer an explicit $ amount ("Flat Fee 2 $1300.00" → 1300, not 2)
     const dollar = s.match(/\$\s*([\d,]+(?:\.\d{1,2})?)/);
     if (dollar) return Number(dollar[1].replace(/,/g, ""));
+    if (requireDollar) return null;
     const bare = s.match(/([\d,]+(?:\.\d{1,2})?)/);
     return bare ? Number(bare[1].replace(/,/g, "")) : null;
   }
@@ -118,11 +120,27 @@ const ImportWO = (() => {
     return rec;
   }
 
+  /** A long carrier name wraps into the next column of the form, and the PDF text then
+   *  appends its first words to the claim or policy number ("533005 Brotherhood Mutual
+   *  Insurance"). Drop a trailing run of words that starts the client company's name. */
+  function unwrapCarrier(value, company) {
+    const words = String(value || "").split(/\s+/).filter(Boolean);
+    const cw = String(company || "").toLowerCase().split(/\s+/).filter(Boolean);
+    for (let i = 1; i < words.length; i++) {
+      const tail = words.slice(i).map(w => w.toLowerCase());
+      if (cw.length && tail.every((w, k) => w === cw[k])) return words.slice(0, i).join(" ");
+    }
+    return value;
+  }
+
   /* ---------- text → work order presets ---------- */
   function parseFCGA(text) {
     const f = sliceFields(text);
     const warnings = [];
     const get = k => f[k] || "";
+    for (const k of ["Claim Number", "Policy Number"]) {
+      if (f[k]) f[k] = unwrapCarrier(f[k], get("Client Company Name"));
+    }
 
     const projectNumber = get("Project Number").match(/\d+/) ? get("Project Number").match(/\d+/)[0] : get("Project Number");
     const lossLocation = get("Loss Location Address");
@@ -130,7 +148,9 @@ const ImportWO = (() => {
 
     // fee logic
     const feeRaw = get("Engineer Service Fee Flat Fee");
-    const dneAmt = moneyIn(get("Do Not Exceed Budget Amount"));
+    // On the FCGA form the DNE label sits beside the mileage text ("125 miles …"),
+    // so only an explicit $ amount counts as a do-not-exceed budget.
+    const dneAmt = moneyIn(get("Do Not Exceed Budget Amount"), true);
     const teVal = get("T&E");
     const flatAmt = moneyIn(feeRaw);
     let feeType = "Flat Fee", flatFee = flatAmt;
@@ -163,7 +183,7 @@ const ImportWO = (() => {
       fieldEngineer: get("Field Engineer") || Store.state.settings.engineerName || "",
       peNumber: pickPE(get("P.E.#"), lossState),
       coaNumber: get("FCGA COA#") || Store.state.settings.coaNumber || "",
-      insuranceCarrier: get("Insurance Carrier") || get("Client Company Name"),
+      insuranceCarrier: get("Insurance Carrier") || get("Insurance Company Carrier") || get("Client Company Name"),
       carrierContact: get("Client Contact Name"),
       carrierContactPhone: get("Client Contact Phone"),
       claimNumber: get("Claim Number"),
@@ -320,5 +340,5 @@ const ImportWO = (() => {
     });
   }
 
-  return { openImportModal, parseFCGA, handleFile };
+  return { openImportModal, parseFCGA, handleFile, fcgaClient };
 })();

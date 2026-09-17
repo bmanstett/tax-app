@@ -98,6 +98,32 @@ Clear it anytime: **Settings → Clear ALL data**, then start fresh.
 - Scanned or copy-protected PDF? Use the **paste-text fallback** in the same dialog
   (open the PDF, Ctrl+A, Ctrl+C, paste).
 
+## Ledger — work-order inbox (intake agent)
+
+**Settings → 📥 Ledger**. Ledger is the Tax App's part of the FCGA agent crew. Choose your `Work Orders` folder once on the desktop,
+in Chrome or Edge. If the browser asks, pick *Allow on every visit*.
+
+The intake agent files each FCGA work-order email into `Work Orders\CYxx\P#xxxxx_…\` and
+writes a `job.json` there with this app's work-order field names. Whenever the app opens
+or comes back into focus (and every 5 minutes while it's open), it scans the current and
+previous year's folders, including `Complete`, `Peer Review Pending` and `Working`:
+
+- **New project number:** adds the work order as *New*, sets FCGA as the client, fills in
+  your office state, field-work split and PE number, and attaches the work-order PDF.
+- **FCGA re-sent the work order:** applies the changed fields (e.g. mileage No → Yes) only
+  where your record still has the old value. Anything you edited yourself is left alone,
+  and the job's Internal Notes lists the conflict for you to review. The new PDF is
+  attached too.
+- **Afterwards:** stamps `pipeline.trackerLogged` in `job.json`, so the agent knows the
+  tracker is current.
+- **Agent log:** adds a line to the job's `00_Agent Log.md`, so the job folder shows what
+  Ledger did alongside the other agents.
+- **Scanned already:** nothing happens. Records carry `intakeKey` (the PDF's hash) and
+  `jobFolder`.
+
+Your phone gets the records through normal sync. The inbox only runs on the computer that
+holds the folder.
+
 ## Which state was the work performed in?
 
 A forensic job is rarely done in one place: the inspection happens on site (often out of state)

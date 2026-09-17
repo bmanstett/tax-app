@@ -7,6 +7,6 @@
 "use strict";
 
 const APP_BUILD = {
-  version: "2026.08.02-1",
-  notes: "Automatic round-trip mileage when a job gets paid, and a Directions button on every work order.",
+  version: "2026.09.16-3",
+  notes: "Ledger (work-order inbox): jobs filed by Dispatch and FCGA revisions land in the app automatically, and each job folder's agent log records it. Work-order import no longer mixes a wrapped carrier name into the claim or policy number.",
 };
