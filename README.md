@@ -66,12 +66,12 @@ Clear it anytime: **Settings → Clear ALL data**, then start fresh.
 | Section | What it does |
 |---|---|
 | **Dashboard** | YTD income/expenses/net, **pending fees from work orders not yet invoiced**, tax reserve estimates, invoice aging, readiness scores, "what needs attention" — every item is tappable and lands where the fix is, including **side-by-side duplicate review** (compare both copies, delete the extra, or keep both) and **one-tap payment-record completion** for invoices marked paid without a date/method |
-| **Work Orders** | Full forensic-engineering job tracker (claim/policy/CAT, insured, loss location, scope, fees, remittance) with **one-tap status changes** (tap the status badge in the list, or the status pipeline in the job detail — dates like report-submitted/invoice/payment are stamped automatically), due-date alerts, quick actions (add mileage/expense/receipt, create invoice, duplicate, export summary), **🧭 Directions** on every job (copies the loss address and opens Google Maps ready to drive), **mileage reimbursable per-mile or as a flat fee** (flows into invoices automatically), and **hands-free status flow** — marking an invoice Sent moves the job to Invoiced; a paid invoice or matching income entry closes it — plus **📄 Import FCGA PDF**: drop an FCGA "Engineer Work Order Form" PDF and every field is parsed into a pre-filled work order (see below) |
+| **Work Orders** | Full forensic-engineering job tracker (claim/policy/CAT, insured, loss location, scope, fees, remittance) with **one-tap status changes** (tap the status badge in the list, or the status pipeline in the job detail — dates like report-submitted/invoice/payment are stamped automatically), due-date alerts, quick actions (add mileage/expense/receipt, create invoice, duplicate, export summary), **🧭 Directions** on every job (copies the loss address and opens Google Maps ready to drive), **mileage reimbursable per-mile or as a flat fee** (flows into invoices automatically), a per-job **Travel Deduction — IRS mileage or expenses** (asked when the job is paid; see below), filters that **stay set when you change a job's status**, and **hands-free status flow** — marking an invoice Sent moves the job to Invoiced; a paid invoice or matching income entry closes it — plus **📄 Import FCGA PDF**: drop an FCGA "Engineer Work Order Form" PDF and every field is parsed into a pre-filled work order (see below) |
 | **Clients** | Rates, terms, W-9/1099 flags, profitability, average payment time, 1099 reconciliation status |
-| **Invoices** | Flat/hourly billing + mileage & expense reimbursements, aging, partial payments, printable invoice, income reconciliation. Marking one paid (or closing its work order) fills the **payment date with that day and the method with ACH / Direct Deposit** unless you set them yourself, and **logs the home-office round trip to the loss location as mileage** |
+| **Invoices** | Flat/hourly billing + mileage & expense reimbursements, aging, partial payments, printable invoice, income reconciliation. Marking one paid (or closing its work order) fills the **payment date with that day and the method with ACH / Direct Deposit** unless you set them yourself, and **asks whether the job's travel counts as IRS mileage (the home-office round trip is logged for you) or as expenses** |
 | **Income** | All money in, 1099 tracking, **state sourcing** (which state's return each dollar belongs on — see below), and the **1099 Reconciliation tool** (compare 1099s received vs. recorded income) |
 | **Expenses** | Schedule C-style categories, business purpose, **receipt upload right on the expense form** (📷 Take photo / 📁 Choose file with preview) plus **one-tap 📎 Attach on every expense row/card** — no need to open the form; attached receipts open in a viewer from the list; business-use %, reimbursable tracking, CPA-review flags |
-| **Mileage** | Field-optimized **⚡ Quick trip** logging, **automatic round trips on paid jobs** (badged “Auto” — distance routed from your home base to the loss location), odometer support, per-year IRS rate, substantiation score, CSV log export |
+| **Mileage** | Field-optimized **⚡ Quick trip** logging, **automatic round trips on paid jobs you count as IRS mileage** (badged “Auto” — distance routed from your home base to the loss location), odometer support, per-year IRS rate, substantiation score, CSV log export |
 | **Receipts** | Attach photos/PDFs (stored locally in IndexedDB) or reference cloud/paper locations; missing-receipt report |
 | **Assets** | Equipment purchases flagged for depreciation / Section 179 CPA review |
 | **Home Office** | Square footage, simplified/actual-method inputs, CPA notes — organizer only |
@@ -152,19 +152,43 @@ so the CPA can decide which state returns to file.
 Work-order forms show them as a labeled dropdown, and PDF imports pick the form's PE number
 (or match the loss-location state if the form has none).
 
-## Mileage logs itself, and directions are one tap away
+## IRS mileage or expenses — asked per job, and directions are one tap away
 
 **🧭 Directions** sits on every work order — on the list cards, in the table, and in the job
 detail. Tapping it copies the loss location to the clipboard *and* opens Google Maps with that
 address already loaded as the destination, so you can start driving (the copy is there in case
 you'd rather paste it somewhere else).
 
-**Mileage is logged for you when the money comes in.** The moment an invoice is marked Paid —
-or a work order is moved to Paid/Closed — the app routes your **home base → loss location**
-round trip and writes it into the mileage log, dated to the inspection, with the purpose,
-client, and work order filled in. Jobs where the client covers mileage are marked reimbursable
-and reimbursed (the paid invoice settled it). Nothing is logged twice: a job that already has a
-trip linked is left alone.
+**When a job is paid, the app asks how its travel counts.** The moment an invoice is marked
+Paid — or a work order is moved to Paid/Closed — you get one question: **🚗 IRS mileage**,
+**💳 Expenses**, or **No travel**. Each work order remembers the answer (**Travel Deduction** on
+the form — set it ahead of time and you won't be asked; leave it on *Ask me when the job is paid*
+and you will).
+
+- **🚗 IRS mileage** — you drove your own vehicle. The app routes your **home base → loss
+  location** round trip and writes it into the mileage log, dated to the inspection, with the
+  purpose, client, and work order filled in. Jobs where the client covers mileage are marked
+  reimbursable and reimbursed (the paid invoice settled it). Nothing is logged twice: a job that
+  already has a trip linked is left alone.
+- **💳 Expenses** — you didn't drive your own vehicle: rental car and its fuel, flight,
+  rideshare. No mileage is logged; a travel expense form opens pre-filled for the job so you can
+  enter what getting there actually cost. The job is flagged until at least one expense is linked.
+- **No travel** — desk-only work (document review and the like). Nothing is logged.
+- **Either way, parking, tolls, lodging and meals go in as expenses on the job.** IRS mileage
+  covers only the running costs of your own vehicle — so with IRS mileage, don't also log that
+  vehicle's gas or repairs.
+- **Decide later** keeps the job on the dashboard's *Paid jobs: IRS mileage or expenses?* list —
+  tap it to answer every waiting job in one dialog. The job's own page asks too.
+- **Changed your mind?** Switch the job's Travel Deduction on the form. Moving to Expenses or No
+  travel offers to remove the auto-logged trip, so the drive isn't deducted twice; moving to IRS
+  mileage on a paid job logs the trip.
+- For a vehicle you own, the IRS generally expects one method (standard mileage or actual costs)
+  for the whole year — the choice here is per job so trips in rental cars or on planes are counted
+  right. Confirm with your CPA.
+- A job counted as expenses or no travel that still carries an **auto-logged** trip (say, one a
+  device on an older build logged) is flagged in red, so the drive isn't deducted twice.
+
+Routing details:
 
 - Set **Settings → Home base** to a full street address — that's where every trip starts.
 - Distances come from free OpenStreetMap services (Nominatim + OSRM, no API key, one lookup a
@@ -172,8 +196,19 @@ trip linked is left alone.
   says so in the trip notes — check those.
 - Auto-logged trips carry an **Auto** badge in the mileage list. Review them and correct the
   miles wherever you actually took a different route — they're an estimate, not a GPS track.
-- Jobs already in the app are caught up automatically on launch. To re-run it by hand (or retry
-  addresses that failed), use **Settings → Data health → 🚗 Log mileage for paid jobs**.
+- Paid jobs set to IRS mileage whose trip never got logged (synced in from the other device, or
+  the address couldn't be routed) are caught up automatically on launch. To re-run it by hand (or
+  retry addresses that failed), use **Settings → Data health → 🚗 Log mileage for paid jobs**.
+
+## Filters stay put
+
+Search, filters, and sort on every list (Work Orders, Invoices, Income, Expenses, Mileage, …)
+survive whatever you do on the page — change a work order's status from a filtered list and the
+filter is still set, and the page keeps your place instead of jumping to the top. They also
+survive switching pages and the *Sync & refresh* update, for as long as the app stays open.
+When the filters hide everything, the list says so; **✕ Clear** resets them. Links that take
+you somewhere to look at specific records (dashboard items, "Create invoice") open the list
+unfiltered, so an old filter can't hide what they point to.
 
 ## Shipping an update
 

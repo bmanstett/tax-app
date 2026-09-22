@@ -209,9 +209,12 @@ const U = {
   async _geoLookup(q) {
     const key = q.toLowerCase();
     if (key in U._geoCache) return U._geoCache[key];
-    const wait = 1100 - (Date.now() - U._geoAt);
-    if (wait > 0) await new Promise(r => setTimeout(r, wait));
-    U._geoAt = Date.now();
+    // claim the next free slot before waiting, so lookups started together (several
+    // jobs answered at once) queue up a second apart instead of all firing at once
+    const at = Math.max(Date.now(), U._geoAt + 1100);
+    U._geoAt = at;
+    if (at > Date.now()) await new Promise(r => setTimeout(r, at - Date.now()));
+    if (key in U._geoCache) return U._geoCache[key];   // answered while we waited
     const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`);
     if (!res.ok) throw new Error(`Address lookup failed (${res.status}) — try again in a moment`);
     const js = await res.json();

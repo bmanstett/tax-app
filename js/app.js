@@ -56,15 +56,20 @@ const App = (() => {
   }
 
   /* ---------- routing ---------- */
-  function go(route) {
+  /** Show a page. freshLists: a deep link (a dashboard item, "see the new invoice") —
+      its lists open unfiltered, so a filter left from earlier can't hide what it's for. */
+  function go(route, { freshLists = false } = {}) {
     if (!Views[route]) route = "dashboard";
     currentRoute = route;
     if (location.hash !== "#/" + route) history.replaceState(null, "", "#/" + route);
-    render();
+    if (freshLists) UI.withFreshLists(() => render()); else render();
   }
 
-  function render() {
+  /** Draw the current page. keepScroll: it's the same page with fresh data (a record
+      changed, a sync came in), so stay where the user was instead of jumping to the top. */
+  function render({ keepScroll = false } = {}) {
     const main = document.getElementById("main");
+    const scroll = keepScroll ? { main: main.scrollTop, win: window.scrollY } : null;
     main.scrollTop = 0; window.scrollTo(0, 0);
     const view = Views[currentRoute] || Views.dashboard;
     document.getElementById("mobile-title").textContent = view.title;
@@ -79,9 +84,10 @@ const App = (() => {
     const yp = main.querySelector("#year-picker");
     if (yp) yp.addEventListener("change", e => { viewYearState = Number(e.target.value); render(); });
     refreshNav();
+    if (scroll) { main.scrollTop = scroll.main; window.scrollTo(0, scroll.win); }
   }
 
-  function rerender() { render(); }
+  function rerender() { render({ keepScroll: true }); }
 
   /** Rerender only if the user isn't mid-edit. Background syncs pull changes from the
       other device at any moment; rebuilding the page under a half-typed field (or an
@@ -92,7 +98,7 @@ const App = (() => {
     if (ae && /INPUT|TEXTAREA|SELECT/.test(ae.tagName)) return false;
     if (document.getElementById("modal-root").children.length) return false;
     if (document.getElementById("sheet-root").children.length) return false;
-    render();
+    render({ keepScroll: true });
     return true;
   }
 

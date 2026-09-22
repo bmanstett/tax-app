@@ -32,6 +32,7 @@ const Income = (() => {
     if (saved) {
       UI.toast(`Invoice ${inv.invoiceNumber} → ${patch.status}`, "success");
       Invoices.syncWorkOrder(saved);
+      Invoices.autoLogWorkOrderMileage(saved);   // paid off → IRS mileage or expenses?
     }
   }
 

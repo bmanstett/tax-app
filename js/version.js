@@ -7,6 +7,6 @@
 "use strict";
 
 const APP_BUILD = {
-  version: "2026.09.16-3",
-  notes: "Ledger (work-order inbox): jobs filed by Dispatch and FCGA revisions land in the app automatically, and each job folder's agent log records it. Work-order import no longer mixes a wrapped carrier name into the claim or policy number.",
+  version: "2026.09.22-1",
+  notes: "Paid jobs now ask: IRS mileage or expenses? And list filters stay set when you change a job's status. IRS mileage logs the round trip for you; Expenses opens a travel-expense form (rental car, flight, rideshare); parking, tolls and lodging are expenses either way.",
 };

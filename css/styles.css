@@ -651,3 +651,32 @@ table.data-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 @media (pointer: coarse) {
   .status-chip { min-height: 36px; }
 }
+
+/* Travel: IRS mileage or expenses? — the question on a paid job (detail banner + chooser dialog) */
+.travel-ask {
+  display: flex; gap: 10px 14px; align-items: center; flex-wrap: wrap;
+  margin-bottom: 14px; padding: 11px 13px; border-radius: 10px;
+  border: 1px solid var(--amber); background: var(--amber-soft);
+}
+.travel-ask-text { flex: 1 1 260px; font-size: 13px; line-height: 1.45; }
+.travel-choices { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.travel-intro { margin: 0 0 8px; font-size: 14px; }
+.travel-help { margin: 0 0 12px; padding-left: 18px; font-size: 12.5px; line-height: 1.5; color: var(--text-2); }
+.travel-help li { margin-bottom: 3px; }
+.travel-help strong { color: var(--text); }
+.travel-list { display: flex; flex-direction: column; gap: 8px; }
+.travel-row {
+  display: flex; gap: 8px 14px; align-items: center; justify-content: space-between; flex-wrap: wrap;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-elev);
+}
+.travel-job { flex: 1 1 220px; min-width: 0; }
+.travel-job-title { font-weight: 700; font-size: 13.5px; }
+.travel-job-title span { font-weight: 500; color: var(--text-2); }
+.travel-job-sub { font-size: 12px; color: var(--text-2); margin-top: 2px; overflow-wrap: anywhere; }
+.travel-status { font-size: 12.5px; font-weight: 700; color: var(--text-2); }
+.travel-status.ok { color: var(--green); }
+.travel-status.bad { color: var(--amber); }
+.travel-note { font-size: 11.5px; color: var(--text-3); margin-top: 10px; }
+@media (pointer: coarse) {
+  .travel-choices .btn-sm { min-height: 36px; }
+}

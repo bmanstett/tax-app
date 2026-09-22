@@ -383,6 +383,7 @@ Views.settings = {
       try {
         await Store.importJSON(text);
         UI.toast("Backup restored ✓", "success");
+        UI.clearListState();   // old filters would point at records that are gone
         App.go("dashboard");
       } catch (err) { UI.toast("Import failed: " + err.message, "error", 7000); }
     });
@@ -434,7 +435,7 @@ Views.settings = {
         `<div class="hint" style="font-size:12px;color:var(--text-3);margin-top:5px">Review each job afterwards: this reads the address only, so a job you inspected somewhere other than the loss address needs a manual fix.</div>`;
       if (filled) { UI.toast(`Set the work state on ${filled} work order${filled > 1 ? "s" : ""}`, "success"); App.refreshNav(); }
     });
-    // backfill: home-office round trip on every paid job that has no mileage logged
+    // backfill: home-office round trip on every paid IRS-mileage job that has no mileage logged
     g("#st-fix-mileage").addEventListener("click", async () => {
       const btn = g("#st-fix-mileage");
       const out = g("#st-health-out");
@@ -442,10 +443,28 @@ Views.settings = {
         out.innerHTML = `<div style="font-size:12.5px;color:var(--red);font-weight:700">Set your <strong>Home base</strong> (a full street address) in the Business profile above first — that's where every trip starts from.</div>`;
         return;
       }
+      // paid jobs that don't say IRS mileage or expenses get nothing logged until you choose
+      const undecided = WO.travelChoicePending().length;
+      // paid IRS-mileage jobs with no loss location can't be routed — say which, don't skip them silently
+      const noAddress = Store.all("workOrder").filter(w => w.travelMethod === SCHEMA.travelMethods.MILEAGE &&
+        WO.isPaid(w) && !WO.lossAddress(w) && !Store.state.mileage.some(m => m.workOrderId === w.id));
+      const askHtml = (undecided
+        ? `<div class="hint" style="font-size:12px;color:var(--amber);margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <span>${undecided} paid job${undecided > 1 ? "s don't" : " doesn't"} say IRS mileage or expenses yet — nothing is logged until you choose.</span>
+            <button class="btn btn-sm" type="button" data-travel-choose>Choose now</button></div>`
+        : "") +
+        (noAddress.length
+          ? `<div class="hint" style="font-size:12px;color:var(--amber);margin-top:6px">${noAddress.length} paid IRS-mileage job${noAddress.length > 1 ? "s have" : " has"} no loss-location address to route to: ${U.escapeHtml(noAddress.slice(0, 8).map(w => w.woNumber || "(unnumbered)").join(", "))}${noAddress.length > 8 ? ` and ${noAddress.length - 8} more` : ""} — add the address, or log the trip by hand.</div>`
+          : "");
+      const wireAsk = () => {
+        const b = out.querySelector("[data-travel-choose]");
+        if (b) b.addEventListener("click", () => WO.openTravelChooser(WO.travelChoicePending()));
+      };
       WO.skipClear();  // retry anything a background sweep gave up on
       const todo = WO.pendingAutoMileage();
       if (!todo.length) {
-        out.innerHTML = `<div style="font-size:13px;color:var(--green);font-weight:700">✓ Every paid job with a loss location already has its mileage logged.</div>`;
+        out.innerHTML = `<div style="font-size:13px;color:var(--green);font-weight:700">✓ Every paid IRS-mileage job with a loss-location address already has its trip logged.</div>` + askHtml;
+        wireAsk();
         return;
       }
       btn.disabled = true;
@@ -462,7 +481,9 @@ Views.settings = {
           ? `✓ Logged ${res.logged} round trip${res.logged > 1 ? "s" : ""} from your home office — ${U.num(res.miles, 0)} miles total. Review them under Mileage and adjust any where you took a different route.`
           : "No trips were logged."}</div>` +
         (res.failed.length ? `<div class="hint" style="font-size:12px;color:var(--amber);margin-top:5px">Couldn't route ${res.failed.length} job(s): ${U.escapeHtml(res.failed.slice(0, 8).map(f => `${f.wo.woNumber || "(unnumbered)"} — ${f.reason}`).join(" · "))}${res.failed.length > 8 ? ` and ${res.failed.length - 8} more` : ""}. Fix the loss-location address on those, or log the trip by hand.</div>` : "") +
-        `<div class="hint" style="font-size:12px;color:var(--text-3);margin-top:5px">From now on this happens on its own: mark an invoice paid and the round trip is logged for you.</div>`;
+        askHtml +
+        `<div class="hint" style="font-size:12px;color:var(--text-3);margin-top:5px">From now on this happens on its own: when a job is paid you're asked IRS mileage or expenses, and IRS mileage logs the round trip for you.</div>`;
+      wireAsk();
       if (res.logged) { UI.toast(`Logged ${res.logged} trip${res.logged > 1 ? "s" : ""} — ${U.num(res.miles, 0)} mi`, "success", 5000); App.refreshNav(); }
     });
     g("#st-check-update").addEventListener("click", async () => {
@@ -490,12 +511,12 @@ Views.settings = {
 
     /* ---- demo / reset ---- */
     const demoBtn = g("#st-demo-load");
-    if (demoBtn) demoBtn.addEventListener("click", () => { Demo.load(); UI.toast("Demo data loaded — explore!", "success"); App.go("dashboard"); });
+    if (demoBtn) demoBtn.addEventListener("click", () => { Demo.load(); UI.clearListState(); UI.toast("Demo data loaded — explore!", "success"); App.go("dashboard"); });
     g("#st-reset").addEventListener("click", async () => {
       const ok = await UI.confirm("Erase everything?",
         "This permanently deletes <strong>all</strong> clients, work orders, invoices, income, expenses, mileage, receipts, assets, contractors, tax data, settings, and the audit log from this browser. Export a backup first!",
         { danger: true, confirmLabel: "Erase all data", requireText: "DELETE" });
-      if (ok) { Store.resetAll(); UI.toast("All data cleared"); App.go("dashboard"); }
+      if (ok) { Store.resetAll(); UI.clearListState(); UI.toast("All data cleared"); App.go("dashboard"); }
     });
   },
 };

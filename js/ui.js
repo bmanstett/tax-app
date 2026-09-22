@@ -368,7 +368,7 @@ const UI = (() => {
         // keep imported/legacy values visible even if not in the options list
         if (val !== "" && val != null && !opts.some(o => String(o) === String(val))) opts.push(String(val));
         return wrap(`<select id="fld-${f.key}" data-key="${f.key}">
-          ${opts.map(o => `<option value="${esc(o)}" ${String(val) === String(o) ? "selected" : ""}>${o === "" ? "—" : esc(o)}</option>`).join("")}</select>`);
+          ${opts.map(o => `<option value="${esc(o)}" ${String(val) === String(o) ? "selected" : ""}>${o === "" ? esc(f.emptyLabel || "—") : esc(o)}</option>`).join("")}</select>`);
       }
       case "peNumber": {
         const pes = (Store.state.settings.peNumbers || []).filter(p => p.number);
@@ -453,6 +453,61 @@ const UI = (() => {
   }
 
   /* ================= Generic list view ================= */
+  /* A list's search, filters and sort outlive the list itself. Changing a
+     record — a work order's status, say — rebuilds the whole page, and so
+     does every background sync; without this, each of those threw away the
+     filters you'd just set. Kept in memory per list (keyed by its container
+     id), and in sessionStorage so the "Sync & refresh" reload keeps them too. */
+  const LV_STATE_KEY = "anstett_list_state";
+  const listMemory = {};
+  function storedListState(key) {
+    try { return (JSON.parse(sessionStorage.getItem(LV_STATE_KEY)) || {})[key] || null; } catch (e) { return null; }
+  }
+  function storeListState(key, s) {
+    try {
+      const all = JSON.parse(sessionStorage.getItem(LV_STATE_KEY)) || {};
+      all[key] = { q: s.q, filters: s.filters, labels: s.labels, sortCol: s.sortCol, sortDir: s.sortDir };
+      sessionStorage.setItem(LV_STATE_KEY, JSON.stringify(all));
+    } catch (e) { /* private mode — memory only */ }
+  }
+
+  /** Forget every list's search/filters/sort — for when the data underneath is replaced
+      wholesale (restore, demo data, erase), and old filters would point at nothing. */
+  function clearListState() {
+    for (const k of Object.keys(listMemory)) delete listMemory[k];
+    try { sessionStorage.removeItem(LV_STATE_KEY); } catch (e) { /* no matter */ }
+  }
+
+  /* Set while a deep link (a dashboard item, "go see the new invoice") draws its page:
+     the lists there start unfiltered, so a filter left from earlier can't hide the very
+     records the link was meant to show. Everyday navigation keeps the filters. */
+  let listsFresh = false;
+  function withFreshLists(fn) {
+    listsFresh = true;
+    try { return fn(); } finally { listsFresh = false; }
+  }
+
+  /** Fresh list state, carrying over whatever the last copy of this list had set —
+      checked against the current filters and columns, so nothing stale sneaks in. */
+  function initListState(key, cfg) {
+    const prev = key && !listsFresh ? (listMemory[key] || storedListState(key)) : null;
+    const s = { q: "", filters: {}, labels: {}, openMulti: null, sortCol: cfg.defaultSort ? cfg.defaultSort.col : 0, sortDir: cfg.defaultSort ? cfg.defaultSort.dir : -1 };
+    if (!prev) return s;
+    if (typeof prev.q === "string") s.q = prev.q;
+    for (const f of cfg.filters || []) {
+      const v = prev.filters ? prev.filters[f.id] : undefined;
+      if (f.multi && Array.isArray(v)) s.filters[f.id] = v.map(String);
+      else if (!f.multi && typeof v === "string") s.filters[f.id] = v;
+      const names = prev.labels && prev.labels[f.id];
+      if (names && typeof names === "object") s.labels[f.id] = { ...names };
+    }
+    if (Number.isInteger(prev.sortCol) && cfg.columns[prev.sortCol]) s.sortCol = prev.sortCol;
+    if (prev.sortDir === 1 || prev.sortDir === -1) s.sortDir = prev.sortDir;
+    // an open filter panel stays open through a background refresh
+    if (prev.openMulti && (cfg.filters || []).some(f => f.multi && f.id === prev.openMulti)) s.openMulti = prev.openMulti;
+    return s;
+  }
+
   /**
    * listView(container, cfg)
    * cfg: {
@@ -465,10 +520,13 @@ const UI = (() => {
    *   card(r) → html (mobile),
    *   empty: {…emptyState args, onAction},
    *   toolbarExtra: html,
+   *   stateKey: string — remembers search/filters/sort under this key (default: the container's id)
    * }
    */
   function listView(container, cfg) {
-    const stateLV = { q: "", filters: {}, openMulti: null, sortCol: cfg.defaultSort ? cfg.defaultSort.col : 0, sortDir: cfg.defaultSort ? cfg.defaultSort.dir : -1 };
+    const stateKey = cfg.stateKey || container.id || "";
+    const stateLV = initListState(stateKey, cfg);
+    if (stateKey) listMemory[stateKey] = stateLV;
 
     // close any open multi-filter panel when tapping elsewhere; self-detaches once this view is gone
     function onDocClick(e) {
@@ -499,7 +557,22 @@ const UI = (() => {
     function render() {
       const rs = rows();
       const filterSelects = (cfg.filters || []).map(f => {
-        const opts = typeof f.options === "function" ? f.options() : f.options;
+        let opts = typeof f.options === "function" ? f.options() : f.options;
+        // a kept filter whose option has since gone (e.g. the last job in that state
+        // moved to another, or the client was deleted) stays listed — under the name
+        // it had when it was picked — so it's visible and can be cleared
+        const optVal = o => String(typeof o === "object" ? o.value : o);
+        const cur = stateLV.filters[f.id];
+        const selected = Array.isArray(cur) ? cur : cur ? [cur] : [];
+        const oldNames = stateLV.labels[f.id] || {};
+        const names = {};
+        for (const v of selected) {
+          const o = opts.find(x => optVal(x) === v);
+          names[v] = o ? String(typeof o === "object" ? o.label : o) : (oldNames[v] || v);
+        }
+        stateLV.labels[f.id] = names;
+        const kept = selected.filter(v => !opts.some(o => optVal(o) === v));
+        if (kept.length) opts = opts.concat(kept.map(v => ({ value: v, label: names[v] })));
         if (f.multi) {
           const sel = stateLV.filters[f.id] || [];
           const optOf = v => opts.find(o => String(typeof o === "object" ? o.value : o) === v);
@@ -527,14 +600,24 @@ const UI = (() => {
           }).join("")}</select>`;
       }).join("");
 
+      if (stateKey) storeListState(stateKey, stateLV);   // after the labels above are current
+      // filters now stick around, so say so when they're what's hiding everything
+      const narrowed = !!stateLV.q || Object.values(stateLV.filters).some(v => Array.isArray(v) ? v.length : v);
+      const hidden = narrowed && !rs.length ? cfg.data().length : 0;
       container.innerHTML = `
         <div class="toolbar">
           <div class="search-box"><input type="text" placeholder="Search…" value="${U.escapeHtml(stateLV.q)}" data-lv-search></div>
           ${filterSelects}
           ${cfg.toolbarExtra || ""}
+          ${narrowed ? `<button type="button" class="btn btn-sm btn-ghost" data-lv-clear title="Clear the search and every filter">✕ Clear</button>` : ""}
           <span style="margin-left:auto;font-size:12px;color:var(--text-3);flex:none">${rs.length} record${rs.length === 1 ? "" : "s"}</span>
         </div>
-        ${rs.length === 0 ? emptyState(cfg.empty || {}) : `
+        ${rs.length === 0 ? (hidden ? `<div class="empty-state">
+            <div class="es-icon">🔍</div>
+            <div class="es-title">Nothing matches these filters</div>
+            <div class="es-sub">${hidden} record${hidden === 1 ? " is" : "s are"} hidden by the search or filters above.</div>
+            <button type="button" class="btn" data-lv-clear>✕ Clear filters</button>
+          </div>` : emptyState(cfg.empty || {})) : `
         <div class="hide-mobile-table">
           <div class="table-wrap"><table class="data-table">
             <thead><tr>${cfg.columns.map((c, i) => `
@@ -570,6 +653,10 @@ const UI = (() => {
       }));
       container.querySelectorAll("[data-mf-all]").forEach(btn => btn.addEventListener("click", () => {
         stateLV.filters[btn.getAttribute("data-mf-all")] = [];
+        render();
+      }));
+      container.querySelectorAll("[data-lv-clear]").forEach(btn => btn.addEventListener("click", () => {
+        stateLV.q = ""; stateLV.filters = {}; stateLV.openMulti = null;
         render();
       }));
       container.querySelectorAll("th[data-col]").forEach(th => th.addEventListener("click", () => {
@@ -680,6 +767,6 @@ const UI = (() => {
 
   return {
     toast, modal, confirm, badge, statusBadge, statCard, emptyState, pageHeader,
-    detailGrid, openForm, listView, sheet, disclaimerHtml, linkChip, viewAttachment, printDoc,
+    detailGrid, openForm, listView, clearListState, withFreshLists, sheet, disclaimerHtml, linkChip, viewAttachment, printDoc,
   };
 })();

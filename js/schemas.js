@@ -63,6 +63,13 @@ SCHEMA.paymentMethods = ["ACH / Direct Deposit", "Check", "Credit Card", "Debit 
 
 SCHEMA.tripTypes = ["Inspection", "Client Meeting", "Supply Run", "Administrative", "Training", "Other"];
 
+/* How a job's travel counts on the return: the IRS standard mileage for the
+   round trip in your own vehicle (logged for you once the job is paid), or
+   what getting there actually cost — rental car and its fuel, airfare,
+   rideshare — entered as expenses on the job. Parking, tolls and lodging are
+   expenses under either. Blank means "ask me when the job is paid". */
+SCHEMA.travelMethods = { MILEAGE: "IRS mileage", EXPENSES: "Expenses", NONE: "No travel" };
+
 SCHEMA.incomeCategories = ["Service Income (1099)", "Service Income (Invoiced)", "Consulting Income",
   "Expert Testimony", "Bonus / Incentive Income", "Reimbursement Received", "Interest Income", "Other Business Income"];
 
@@ -271,6 +278,14 @@ SCHEMA.fields.workOrder = [
   F("mileageFlatFee", "Mileage Flat Fee Amount", "money", { showIf: r => !!r.mileageAllowed && r.mileageReimbType === "Flat fee" }),
   F("mileageAmount", "Mileage Rate Note", "text", { placeholder: "e.g. IRS rate, $0.70/mi, cap 145 mi", showIf: r => !!r.mileageAllowed && r.mileageReimbType !== "Flat fee" }),
   F("parkingTolls", "Parking / Tolls Budget", "money"),
+
+  F("_s6b", "Travel Deduction", "section"),
+  F("travelMethod", "Account for this job's travel with", "select", {
+    options: [SCHEMA.travelMethods.MILEAGE, SCHEMA.travelMethods.EXPENSES, SCHEMA.travelMethods.NONE],
+    emptyLabel: "Ask me when the job is paid",
+    hint: "IRS mileage: you drove your own vehicle — the round trip from your home base is logged when the job is paid " +
+      "(don't also log that vehicle's gas or repairs). Expenses: rental car and its fuel, flight, rideshare — enter what " +
+      "getting there cost as expenses on this job; no mileage is logged. Either way, parking, tolls and lodging go in as expenses." }),
 
   F("_s7", "Remittance & Delivery", "section"),
   F("reportRemittance", "Report Remittance Instructions", "textarea", { span2: true, placeholder: "e.g. upload PDF to COR system, email to claims@…" }),
