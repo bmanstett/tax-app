@@ -299,8 +299,9 @@ const WO = (() => {
     // the lookup takes a moment — the trip may have landed, or the choice changed, meanwhile
     if (hasMileage(w)) return { status: "skipped", reason: "mileage already logged" };
     const now = Store.get("workOrder", w.id);
-    const nowMethod = (now && now.travelMethod) || "";
-    if (now && nowMethod !== TM.MILEAGE && !(chosen && nowMethod === chosenFrom))
+    if (!now) return { status: "skipped", reason: "the work order is gone" };   // deleted meanwhile — no orphan trip
+    const nowMethod = now.travelMethod || "";
+    if (nowMethod !== TM.MILEAGE && !(chosen && nowMethod === chosenFrom))
       return { status: "skipped", reason: notMileageReason(now) };
 
     const oneWay = U.round2(route.miles);
@@ -358,7 +359,15 @@ const WO = (() => {
     const w = Store.get("workOrder", typeof wOrId === "string" ? wOrId : wOrId && wOrId.id);
     if (!w) return;
     if (needsTravelChoice(w)) { openTravelChooser([w]); return; }
-    if (!pendingAutoMileage().some(x => x.id === w.id)) return;
+    if (!pendingAutoMileage().some(x => x.id === w.id)) {
+      // set to IRS mileage and paid, but nothing can be logged — say why instead of staying silent
+      if (w.travelMethod === TM.MILEAGE && isPaid(w) && !hasMileage(w)) {
+        const why = tripYearLocked(w) ? `tax year ${U.yearOf(tripDateFor(w))} is locked`
+          : !lossAddress(w) ? "no loss-location address on the work order" : "";
+        if (why) UI.toast(`${w.woNumber || "Work order"} is set to IRS mileage, but no trip was logged — ${why}`, "error", 7000);
+      }
+      return;
+    }
     UI.toast("🚗 Calculating this job's round-trip mileage…");
     autoLogMileage(w).then(r => {
       if (r.status === "logged") {
@@ -467,21 +476,24 @@ const WO = (() => {
   let detailOnScreen = null;   // {id, m}
 
   /** Redraw what shows this job: the page underneath and its detail (the detail
-      only when nothing is open on top of it). */
-  function afterTravelChange(id) {
+      only when nothing is open on top of it). onDone: the caller refreshes its own
+      part of the page instead (Settings, where a full rebuild would throw away
+      unsaved typing and the Data health results). */
+  function afterTravelChange(id, { onDone } = {}) {
+    const refresh = () => (onDone ? onDone() : App.rerenderIfIdle());
     const d = detailOnScreen;
     if (d && d.id === id && d.m.el.isConnected && document.getElementById("modal-root").lastElementChild === d.m.el) {
       d.m.close();
-      App.rerenderIfIdle();   // before the detail comes back — an open modal would block it
+      refresh();   // before the detail comes back — an open modal would block it
       const w = Store.get("workOrder", id);
       if (w) openDetail(w);
       return;
     }
-    App.rerenderIfIdle();
+    refresh();
   }
 
   /** New expense, pre-filled for this job's travel (rental car, airfare, fuel, lodging…). */
-  function openTravelExpense(w) {
+  function openTravelExpense(w, { onDone } = {}) {
     const where = lossAddress(w);
     return UI.openForm("expense", null, {
       title: "Travel Expense",
@@ -493,18 +505,18 @@ const WO = (() => {
       onSave: v => {
         if (!Store.add("expense", v)) return;
         UI.toast("Travel expense added", "success");
-        setTimeout(() => afterTravelChange(w.id), 0);   // once this form has closed
+        setTimeout(() => afterTravelChange(w.id, { onDone }), 0);   // once this form has closed
       },
     });
   }
 
   /** Act on a choice made for one job, with feedback: log the trip (IRS mileage),
       or open an expense form so the costs get entered (Expenses). */
-  function applyTravelChoice(w, method) {
+  function applyTravelChoice(w, method, { onDone } = {}) {
     const wo = w.woNumber || "Work order";
     if (method === TM.MILEAGE && isPaid(w) && !hasMileage(w)) UI.toast("🚗 Calculating this job's round-trip mileage…");
     return chooseTravel(w, method).then(r => {
-      afterTravelChange(w.id);
+      afterTravelChange(w.id, { onDone });
       const gap = r.saved ? mileageGap(w, r) : "";
       if (!r.saved) UI.toast(`Couldn't save the travel choice — ${r.reason}`, "error", 6000);
       else if (r.status === "logged") UI.toast(`🚗 IRS mileage — ${U.num(r.miles, 1)} mi round trip from the home office logged ≈ ${U.money(Store.tripDeduction(r.trip))} deduction`, "success", 6000);
@@ -513,7 +525,7 @@ const WO = (() => {
       else if (method === TM.MILEAGE) UI.toast(`${wo}: IRS mileage${hasMileage(w) ? " — trip already logged" : " — the round trip is logged when the job is paid"}`, "success");
       else if (method === TM.EXPENSES) {
         UI.toast(`💳 ${wo}: travel counts as expenses — no mileage logged`, "success", 4500);
-        if (!linked(w).expenses.length) openTravelExpense(w);
+        if (!linked(w).expenses.length) openTravelExpense(w, { onDone });
       } else UI.toast(`${wo}: no travel — nothing to log`, "success");
       return r;
     }).catch(e => UI.toast(`Couldn't save the travel choice — ${e.message}`, "error", 6000));
@@ -523,8 +535,8 @@ const WO = (() => {
   const asking = new Set();
 
   /** Ask how travel counts on one or more paid jobs. One job: answering closes the
-      dialog. Several: each row is answered in place. */
-  function openTravelChooser(list) {
+      dialog. Several: each row is answered in place. onDone: see afterTravelChange. */
+  function openTravelChooser(list, { onDone } = {}) {
     list = (list || []).filter(w => w && !asking.has(w.id));
     if (!list.length) return null;
     const esc = U.escapeHtml;
@@ -567,7 +579,7 @@ const WO = (() => {
       onClose: () => {
         list.forEach(w => asking.delete(w.id));
         if (single && !chosen) UI.toast(`${list[0].woNumber || "The job"} stays on your to-do list until you choose — Dashboard or the job's page`, "default", 4500);
-        if (!single) App.rerenderIfIdle();
+        if (!single) { if (onDone) onDone(); else App.rerenderIfIdle(); }
       },
     });
     m.footerEl.querySelector("#travel-later").addEventListener("click", () => m.close());
@@ -591,14 +603,14 @@ const WO = (() => {
 
     m.body.addEventListener("click", e => {
       const add = e.target.closest("[data-travel-expense]");
-      if (add) { const w = Store.get("workOrder", add.getAttribute("data-travel-expense")); if (w) openTravelExpense(w); return; }
+      if (add) { const w = Store.get("workOrder", add.getAttribute("data-travel-expense")); if (w) openTravelExpense(w, { onDone }); return; }
       const pick = e.target.closest("[data-travel-pick]");
       if (!pick) return;
       const rowEl = pick.closest("[data-travel-row]");
       const w = rowEl && Store.get("workOrder", rowEl.getAttribute("data-travel-row"));
       if (!w) return;
       const method = pick.getAttribute("data-travel-pick");
-      if (single) { chosen = true; m.close(); applyTravelChoice(w, method); }
+      if (single) { chosen = true; m.close(); applyTravelChoice(w, method, { onDone }); }
       else answerRow(rowEl, w, method);
     });
     return m;

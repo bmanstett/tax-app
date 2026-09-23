@@ -478,6 +478,12 @@ const UI = (() => {
     try { sessionStorage.removeItem(LV_STATE_KEY); } catch (e) { /* no matter */ }
   }
 
+  /** A new page is being drawn (not a refresh of this one): close any open filter-chip
+      panel, which should only survive a background refresh of the page it's on. */
+  function closeListPanels() {
+    for (const s of Object.values(listMemory)) s.openMulti = null;
+  }
+
   /* Set while a deep link (a dashboard item, "go see the new invoice") draws its page:
      the lists there start unfiltered, so a filter left from earlier can't hide the very
      records the link was meant to show. Everyday navigation keeps the filters. */
@@ -603,14 +609,17 @@ const UI = (() => {
       if (stateKey) storeListState(stateKey, stateLV);   // after the labels above are current
       // filters now stick around, so say so when they're what's hiding everything
       const narrowed = !!stateLV.q || Object.values(stateLV.filters).some(v => Array.isArray(v) ? v.length : v);
-      const hidden = narrowed && !rs.length ? cfg.data().length : 0;
+      const total = narrowed ? cfg.data().length : rs.length;
+      const hidden = rs.length ? 0 : total;
+      // "3 of 7" while narrowed, so a record just saved that the filters hide isn't a mystery
+      const countText = narrowed && total !== rs.length ? `${rs.length} of ${total} records` : `${rs.length} record${rs.length === 1 ? "" : "s"}`;
       container.innerHTML = `
         <div class="toolbar">
           <div class="search-box"><input type="text" placeholder="Search…" value="${U.escapeHtml(stateLV.q)}" data-lv-search></div>
           ${filterSelects}
           ${cfg.toolbarExtra || ""}
           ${narrowed ? `<button type="button" class="btn btn-sm btn-ghost" data-lv-clear title="Clear the search and every filter">✕ Clear</button>` : ""}
-          <span style="margin-left:auto;font-size:12px;color:var(--text-3);flex:none">${rs.length} record${rs.length === 1 ? "" : "s"}</span>
+          <span style="margin-left:auto;font-size:12px;color:var(--text-3);flex:none">${countText}</span>
         </div>
         ${rs.length === 0 ? (hidden ? `<div class="empty-state">
             <div class="es-icon">🔍</div>
@@ -767,6 +776,6 @@ const UI = (() => {
 
   return {
     toast, modal, confirm, badge, statusBadge, statCard, emptyState, pageHeader,
-    detailGrid, openForm, listView, clearListState, withFreshLists, sheet, disclaimerHtml, linkChip, viewAttachment, printDoc,
+    detailGrid, openForm, listView, clearListState, withFreshLists, closeListPanels, sheet, disclaimerHtml, linkChip, viewAttachment, printDoc,
   };
 })();

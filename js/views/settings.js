@@ -443,28 +443,41 @@ Views.settings = {
         out.innerHTML = `<div style="font-size:12.5px;color:var(--red);font-weight:700">Set your <strong>Home base</strong> (a full street address) in the Business profile above first — that's where every trip starts from.</div>`;
         return;
       }
-      // paid jobs that don't say IRS mileage or expenses get nothing logged until you choose
-      const undecided = WO.travelChoicePending().length;
-      // paid IRS-mileage jobs with no loss location can't be routed — say which, don't skip them silently
-      const noAddress = Store.all("workOrder").filter(w => w.travelMethod === SCHEMA.travelMethods.MILEAGE &&
-        WO.isPaid(w) && !WO.lossAddress(w) && !Store.state.mileage.some(m => m.workOrderId === w.id));
-      const askHtml = (undecided
-        ? `<div class="hint" style="font-size:12px;color:var(--amber);margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <span>${undecided} paid job${undecided > 1 ? "s don't" : " doesn't"} say IRS mileage or expenses yet — nothing is logged until you choose.</span>
-            <button class="btn btn-sm" type="button" data-travel-choose>Choose now</button></div>`
-        : "") +
-        (noAddress.length
-          ? `<div class="hint" style="font-size:12px;color:var(--amber);margin-top:6px">${noAddress.length} paid IRS-mileage job${noAddress.length > 1 ? "s have" : " has"} no loss-location address to route to: ${U.escapeHtml(noAddress.slice(0, 8).map(w => w.woNumber || "(unnumbered)").join(", "))}${noAddress.length > 8 ? ` and ${noAddress.length - 8} more` : ""} — add the address, or log the trip by hand.</div>`
-          : "");
-      const wireAsk = () => {
-        const b = out.querySelector("[data-travel-choose]");
-        if (b) b.addEventListener("click", () => WO.openTravelChooser(WO.travelChoicePending()));
+      // The jobs nothing gets logged for, named rather than skipped silently: paid jobs that
+      // don't say IRS mileage or expenses yet, and IRS-mileage jobs that can't have a trip
+      // (no loss location to route to, or a trip date in a locked tax year).
+      const woList = ws => U.escapeHtml(ws.slice(0, 8).map(w => w.woNumber || "(unnumbered)").join(", ")) + (ws.length > 8 ? ` and ${ws.length - 8} more` : "");
+      const missingTrip = () => Store.all("workOrder").filter(w => w.travelMethod === SCHEMA.travelMethods.MILEAGE &&
+        WO.isPaid(w) && !Store.state.mileage.some(m => m.workOrderId === w.id));
+      const tripLocked = w => Store.isYearLocked(U.yearOf(WO.tripDateFor(w)));
+      const travelNotes = () => {
+        const undecided = WO.travelChoicePending().length;
+        const locked = missingTrip().filter(tripLocked);
+        const noAddress = missingTrip().filter(w => !tripLocked(w) && !WO.lossAddress(w));
+        const line = (html, extra = "") => `<div class="hint" style="font-size:12px;color:var(--amber);margin-top:6px${extra}">${html}</div>`;
+        return (undecided ? line(`<span>${undecided} paid job${undecided > 1 ? "s don't" : " doesn't"} say IRS mileage or expenses yet — nothing is logged until you choose.</span>
+            <button class="btn btn-sm" type="button" data-travel-choose>Choose now</button>`, ";display:flex;gap:8px;align-items:center;flex-wrap:wrap") : "") +
+          (noAddress.length ? line(`${noAddress.length} paid IRS-mileage job${noAddress.length > 1 ? "s have" : " has"} no loss-location address to route to: ${woList(noAddress)} — add the address, or log the trip by hand.`) : "") +
+          (locked.length ? line(`${locked.length} paid IRS-mileage job${locked.length > 1 ? "s have" : " has"} no trip, and the trip date is in a locked tax year: ${woList(locked)} — unlock the year (Taxes) to log ${locked.length > 1 ? "them" : "it"}.`) : "");
       };
+      // answering the chooser refreshes just these lines — rebuilding Settings would throw
+      // away the results above and anything typed but not yet saved on this page
+      const paintNotes = () => {
+        const box = out.querySelector("[data-travel-notes]");
+        if (!box) return;
+        box.innerHTML = travelNotes();
+        const b = box.querySelector("[data-travel-choose]");
+        if (b) b.addEventListener("click", () => WO.openTravelChooser(WO.travelChoicePending(), { onDone: () => { paintNotes(); App.refreshNav(); } }));
+      };
+      const notesBox = `<div data-travel-notes></div>`;
       WO.skipClear();  // retry anything a background sweep gave up on
       const todo = WO.pendingAutoMileage();
       if (!todo.length) {
-        out.innerHTML = `<div style="font-size:13px;color:var(--green);font-weight:700">✓ Every paid IRS-mileage job with a loss-location address already has its trip logged.</div>` + askHtml;
-        wireAsk();
+        const stuck = missingTrip().filter(w => tripLocked(w) || !WO.lossAddress(w)).length;
+        out.innerHTML = (stuck
+          ? `<div style="font-size:13px;color:var(--text-2);font-weight:700">Nothing more can be logged automatically right now.</div>`
+          : `<div style="font-size:13px;color:var(--green);font-weight:700">✓ Every paid IRS-mileage job already has its trip logged.</div>`) + notesBox;
+        paintNotes();
         return;
       }
       btn.disabled = true;
@@ -481,9 +494,9 @@ Views.settings = {
           ? `✓ Logged ${res.logged} round trip${res.logged > 1 ? "s" : ""} from your home office — ${U.num(res.miles, 0)} miles total. Review them under Mileage and adjust any where you took a different route.`
           : "No trips were logged."}</div>` +
         (res.failed.length ? `<div class="hint" style="font-size:12px;color:var(--amber);margin-top:5px">Couldn't route ${res.failed.length} job(s): ${U.escapeHtml(res.failed.slice(0, 8).map(f => `${f.wo.woNumber || "(unnumbered)"} — ${f.reason}`).join(" · "))}${res.failed.length > 8 ? ` and ${res.failed.length - 8} more` : ""}. Fix the loss-location address on those, or log the trip by hand.</div>` : "") +
-        askHtml +
+        notesBox +
         `<div class="hint" style="font-size:12px;color:var(--text-3);margin-top:5px">From now on this happens on its own: when a job is paid you're asked IRS mileage or expenses, and IRS mileage logs the round trip for you.</div>`;
-      wireAsk();
+      paintNotes();
       if (res.logged) { UI.toast(`Logged ${res.logged} trip${res.logged > 1 ? "s" : ""} — ${U.num(res.miles, 0)} mi`, "success", 5000); App.refreshNav(); }
     });
     g("#st-check-update").addEventListener("click", async () => {

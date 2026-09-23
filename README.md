@@ -206,7 +206,9 @@ Search, filters, and sort on every list (Work Orders, Invoices, Income, Expenses
 survive whatever you do on the page — change a work order's status from a filtered list and the
 filter is still set, and the page keeps your place instead of jumping to the top. They also
 survive switching pages and the *Sync & refresh* update, for as long as the app stays open.
-When the filters hide everything, the list says so; **✕ Clear** resets them. Links that take
+While filters are on, the record count reads *3 of 7 records* (so a record you just saved that
+the filters hide isn't a mystery); when they hide everything, the list says so; **✕ Clear**
+resets them. Links that take
 you somewhere to look at specific records (dashboard items, "Create invoice") open the list
 unfiltered, so an old filter can't hide what they point to.
 

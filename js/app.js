@@ -71,6 +71,7 @@ const App = (() => {
     const main = document.getElementById("main");
     const scroll = keepScroll ? { main: main.scrollTop, win: window.scrollY } : null;
     main.scrollTop = 0; window.scrollTo(0, 0);
+    if (!keepScroll) UI.closeListPanels();   // a fresh page opens with its filter panels shut
     const view = Views[currentRoute] || Views.dashboard;
     document.getElementById("mobile-title").textContent = view.title;
     try {
