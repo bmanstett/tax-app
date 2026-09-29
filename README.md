@@ -108,14 +108,21 @@ writes a `job.json` there with this app's work-order field names. Whenever the a
 or comes back into focus (and every 5 minutes while it's open), it scans the current and
 previous year's folders, including `Complete`, `Peer Review Pending` and `Working`:
 
+- **Matching is by project number (P#) only.** FCGA opens a new P# for every assignment,
+  including a supplement or a second or third report on a claim it has worked before, so a
+  new P# on a claim you already have is always its own work order. The claim number is never
+  used to match. A P# found in two job folders is left alone (and flagged once) until there
+  is one.
 - **New project number:** adds the work order as *New*, sets FCGA as the client, fills in
   your office state, field-work split and PE number, and attaches the work-order PDF.
 - **FCGA re-sent the work order:** applies the changed fields (e.g. mileage No → Yes) only
   where your record still has the old value. Anything you edited yourself is left alone,
   and the job's Internal Notes lists the conflict for you to review. The new PDF is
   attached too.
-- **Afterwards:** stamps `pipeline.trackerLogged` in `job.json`, so the agent knows the
-  tracker is current.
+- **Afterwards:** stamps `pipeline.trackerLogged` and `pipeline.trackerWO` (the record it
+  logged the job under) in `job.json`, so the agents can confirm the tracker is current and
+  the job went in under its own P#.
+- **Job moved:** when Patti moves a job folder, the record's `jobFolder` follows it.
 - **Agent log:** adds a line to the job's `00_Agent Log.md`, so the job folder shows what
   Ledger did alongside the other agents.
 - **Scanned already:** nothing happens. Records carry `intakeKey` (the PDF's hash) and
