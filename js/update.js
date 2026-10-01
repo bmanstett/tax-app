@@ -77,8 +77,10 @@ const AppUpdate = (() => {
     const el = bannerEl();
     if (!el || !latest) return;
     if (ss.get(DISMISS_KEY) === latest.version) return;   // they tapped Later on this one
-    el.querySelector("#ub-note").textContent = latest.notes
-      ? U.truncate(latest.notes, 110)
+    // release notes are free text — cut a long one at a word, never mid-word
+    const note = latest.notes || "";
+    el.querySelector("#ub-note").textContent = note
+      ? (note.length > 110 ? note.slice(0, 109).replace(/\s+\S*$/, "") + "…" : note)
       : `Version ${latest.version} is ready — refresh to load it.`;
     el.hidden = false;
   }

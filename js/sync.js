@@ -259,7 +259,14 @@ const Sync = (() => {
       }
       setStatus("ok");
       // records pulled from another device may predate the payment defaults — tidy them too
-      if (res.pulledChanges && window.App) { App.tidyData(); App.rerenderIfIdle(); }
+      // (App and WO are top-level consts, not window properties — a `window.App` test is always
+      // false; sync() only ever runs after every script has loaded, so the names are bound)
+      if (res.pulledChanges) {
+        // UI follow-ups on pulled records — never let one count as a sync failure
+        try { App.tidyData(); App.rerenderIfIdle(); } catch (e) { console.warn("Post-sync tidy/redraw skipped:", e); }
+        // jobs that arrived from the other device get asked: IRS mileage or expenses?
+        try { WO.noticeArrivals(); } catch (e) { console.warn("Travel question skipped:", e); }
+      }
       if (manual) UI.toast("Sync complete ✓", "success");
       return { ok: true, ...res };
     } catch (e) {

@@ -198,7 +198,7 @@ Views.dashboard = {
       ${UI.disclaimerHtml()}
     `;
 
-    el.querySelectorAll("[data-route]").forEach(x => x.addEventListener("click", () => App.go(x.getAttribute("data-route"))));
+    el.querySelectorAll("[data-route]").forEach(x => x.addEventListener("click", () => App.go(x.getAttribute("data-route"), { freshLists: true })));
     // some attention items open a review screen instead of just jumping to a page
     el.querySelectorAll("[data-action]").forEach(x => x.addEventListener("click", () => DataHealth.run(x.getAttribute("data-action"))));
     Charts.bindTooltips(el);

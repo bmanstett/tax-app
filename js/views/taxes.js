@@ -153,7 +153,7 @@ Views.taxes = {
       Store.save();
       App.rerender();
     }));
-    el.querySelectorAll("[data-route]").forEach(x => x.addEventListener("click", () => App.go(x.getAttribute("data-route"))));
+    el.querySelectorAll("[data-route]").forEach(x => x.addEventListener("click", () => App.go(x.getAttribute("data-route"), { freshLists: true })));
 
     const lockBtn = el.querySelector("#tx-lock");
     if (lockBtn) lockBtn.addEventListener("click", async () => {

@@ -92,6 +92,12 @@ const Alerts = (() => {
       items: wos.filter(w => w.status === "Submitted"),
     });
     push({
+      id: "wo-travel-choice", icon: "🚗", route: "workorders", action: "travel-choice", severity: "warn", weight: 1,
+      title: "Jobs to decide: IRS mileage or expenses?",
+      sub: "Tap to choose how each job's travel counts — asked as jobs come in; no mileage is logged until you do",
+      items: wos.filter(WO.needsTravelChoice),
+    });
+    push({
       id: "wo-overdue-report", icon: "⏰", route: "workorders", severity: "warn", weight: 1,
       title: "Reports past their due date",
       sub: "",

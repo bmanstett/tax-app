@@ -127,6 +127,11 @@ const Store = (() => {
     const d = rec.date || rec.invoiceDate || rec.purchaseDate || rec.dateAssigned || null;
     return d ? U.yearOf(d) : null;
   }
+  /** True when the record sits in a locked tax year (so edits to it will be refused). */
+  function recordLocked(rec) {
+    const y = recordYear(rec);
+    return !!(y && isYearLocked(y));
+  }
   function lockGuard(rec) {
     const y = recordYear(rec);
     if (y && isYearLocked(y)) {
@@ -624,7 +629,7 @@ const Store = (() => {
     incomeWorkOrder, incomeStateSource, incomeStateSplit, stateIncomeSummary,
     findDuplicates, setDuplicateIgnored, statusChangedAt, integrityCheck,
     exportJSON, importJSON, validateImport, resetAll, applySynced,
-    isYearLocked, backupDue, markBackedUp, markSettingsChanged,
+    isYearLocked, recordLocked, backupDue, markBackedUp, markSettingsChanged,
     logAudit, labelFor,
     Attachments,
   };
