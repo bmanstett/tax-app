@@ -93,8 +93,8 @@ const Alerts = (() => {
     });
     push({
       id: "wo-travel-choice", icon: "🚗", route: "workorders", action: "travel-choice", severity: "warn", weight: 1,
-      title: "Paid jobs: IRS mileage or expenses?",
-      sub: "Tap to choose how each job's travel counts — no mileage is logged until you do",
+      title: "Jobs to decide: IRS mileage or expenses?",
+      sub: "Tap to choose how each job's travel counts — asked as jobs come in; no mileage is logged until you do",
       items: wos.filter(WO.needsTravelChoice),
     });
     push({

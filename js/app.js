@@ -100,6 +100,9 @@ const App = (() => {
     if (document.getElementById("modal-root").children.length) return false;
     if (document.getElementById("sheet-root").children.length) return false;
     render({ keepScroll: true });
+    // a job that came in while a form was open gets its travel question now (never let it
+    // fail the caller — syncs and Ledger scans call this)
+    try { WO.flushTravelAsk(); } catch (e) { console.warn("Travel question skipped:", e); }
     return true;
   }
 
@@ -191,10 +194,10 @@ const App = (() => {
       onClose: () => {},
     });
     m.footerEl.querySelector("#fr-fresh").addEventListener("click", () => {
-      Store.state.demoDataLoaded = false; Store.save(); m.close(); render();
+      Store.state.demoDataLoaded = false; Store.save(); WO.reseedArrivals(); m.close(); render();
     });
     m.footerEl.querySelector("#fr-demo").addEventListener("click", () => {
-      Demo.load(); m.close(); UI.toast("Demo data loaded — clear it anytime in Settings", "success", 4000); render();
+      Demo.load(); WO.reseedArrivals(); m.close(); UI.toast("Demo data loaded — clear it anytime in Settings", "success", 4000); render();
     });
   }
 
@@ -208,6 +211,7 @@ const App = (() => {
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
     Store.load();
+    WO.seedArrivals();   // first run of this build: what's on the books now is "seen", not new
     Sync.init();
     setTheme(Store.state.settings.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
 
@@ -245,6 +249,14 @@ const App = (() => {
     render();
     AppUpdate.init();
     Inbox.init();   // work orders filed by the intake agent (desktop Chrome/Edge only)
+
+    // every work order that comes in is asked: IRS mileage or expenses? Jobs that arrive in
+    // the background (Ledger, a sync) wait for an idle moment — these are the moments
+    setTimeout(() => WO.noticeArrivals(), 1500);
+    const askTravel = () => WO.flushTravelAsk();
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) setTimeout(askTravel, 800); });
+    window.addEventListener("focus", () => setTimeout(askTravel, 800));
+    setInterval(askTravel, 45 * 1000);
 
     // complete any paid invoice still missing its payment date/method
     setTimeout(() => { if (tidyData({ announce: true }).length) render(); }, 600);

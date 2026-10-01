@@ -10,7 +10,9 @@
      • adds work orders it hasn't seen, with the work-order PDF attached;
      • applies FCGA revisions (e.g. mileage No → Yes) to existing work
        orders, without overwriting fields you have edited yourself;
-     • stamps job.json so the agent knows the tracker is up to date.
+     • stamps job.json so the agent knows the tracker is up to date;
+     • asks, for each new job, how its travel counts (IRS mileage or
+       expenses) — the app's own question; nothing of it goes into job.json.
    A job folder and a tracker record are matched by project number (P#)
    only. FCGA gives every assignment its own P#, even a second or third
    report on a claim it has worked before, so the same claim number on a
@@ -335,6 +337,9 @@ const Inbox = (() => {
         UI.toast(`📥 Ledger: ${head}${imported.length > 3 ? ` +${imported.length - 3} more` : ""}`,
           imported.some(r => r.kind === "error" || r.kind === "check") ? "error" : "success", 7000);
         App.rerenderIfIdle();
+        // new jobs get the IRS-mileage-or-expenses question at the next idle moment — a Tax App
+        // matter only; job.json, the agent log and the P# matching above are untouched by it
+        try { WO.noticeArrivals(); } catch (e) { console.warn("Ledger: travel question skipped", e); }
       } else if (interactive) {
         UI.toast("📥 Ledger checked the job folders — nothing new", "default", 2500);
       }

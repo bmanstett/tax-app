@@ -47,20 +47,21 @@ const WO = (() => {
     }
     if (w.status === "Submitted" && !L.invoices.length) out.push({ key: "unbilled", text: "Submitted — not invoiced", color: "amber" });
     if (L.invoices.some(Store.invoiceIsOverdue)) out.push({ key: "invoverdue", text: "Invoice overdue", color: "red" });
-    // travel: a paid job that doesn't say mileage or expenses gets asked; one that
-    // does is held to it (a trip for IRS mileage, linked expenses for Expenses)
-    const tripDone = ["Inspected", "Report Drafting", "Submitted", "Invoiced", "Paid", "Closed"].includes(w.status);
+    // travel: a job that doesn't say mileage or expenses yet is asked (when it comes in,
+    // and again if paid); one that does is held to it (a trip for IRS mileage, linked
+    // expenses for Expenses)
+    const done = tripDone(w);
     let travelExpensesMissing = false;
     if (needsTravelChoice(w)) {
-      out.push({ key: "travel", text: "Paid — IRS mileage or expenses?", color: "amber" });
+      out.push({ key: "travel", text: isPaid(w) ? "Paid — IRS mileage or expenses?" : "IRS mileage or expenses?", color: "amber" });
     } else if (w.travelMethod === TM.EXPENSES || w.travelMethod === TM.NONE) {
-      travelExpensesMissing = w.travelMethod === TM.EXPENSES && tripDone && !L.expenses.length;
+      travelExpensesMissing = w.travelMethod === TM.EXPENSES && done && !L.expenses.length;
       if (travelExpensesMissing) out.push({ key: "noexpenses", text: "Travel counted as expenses — none linked", color: "amber" });
       // an app-logged IRS trip here (e.g. from a device still on an older build) deducts
       // the drive twice — trips you logged yourself are your call
       if (L.mileage.some(m => m.autoLogged))
         out.push({ key: "doubletrip", text: `Auto-logged mileage on a job counted as ${w.travelMethod === TM.EXPENSES ? "expenses" : "no travel"}`, color: "red" });
-    } else if (!L.mileage.length && ((w.mileageAllowed && tripDone) || (w.travelMethod === TM.MILEAGE && isPaid(w)))) {
+    } else if (!L.mileage.length && ((w.mileageAllowed && done) || (w.travelMethod === TM.MILEAGE && isPaid(w)))) {
       out.push({ key: "nomiles", text: "No mileage logged", color: "amber" });
     }
     if ((Number(w.parkingTolls) || 0) > 0 && !L.expenses.length && !travelExpensesMissing)
@@ -166,7 +167,10 @@ const WO = (() => {
         UI.toast(rec ? "Work order updated" : "Work order added", "success");
         if (saved && opts.afterSave) opts.afterSave(saved);
         App.rerender();
-        if (saved) travelAfterEdit(before, saved);
+        if (saved) {
+          travelAfterEdit(before, saved);
+          if (!rec) askOnArrival(saved);   // a job that just came in: IRS mileage or expenses?
+        }
       },
       deleteFn: r => { Store.remove("workOrder", r.id); UI.toast("Work order deleted"); App.rerender(); },
     });
@@ -256,6 +260,10 @@ const WO = (() => {
 
   /** The trip would land in a locked tax year — nothing can be logged for it. */
   const tripYearLocked = w => Store.isYearLocked(U.yearOf(tripDateFor(w)));
+
+  /** The drive (or flight) has plausibly happened: the job is inspected or further along, or paid. */
+  const TRIP_DONE = ["Inspected", "Report Drafting", "Submitted", "Invoiced", "Paid", "Closed"];
+  const tripDone = w => TRIP_DONE.includes(w.status) || isPaid(w);
 
   /** Jobs set to IRS mileage that are paid, have an address to route to, and no trip logged yet. */
   function pendingAutoMileage() {
@@ -402,18 +410,20 @@ const WO = (() => {
      for the round trip. Flew in and rented a car → what the transportation
      actually cost, entered as expenses on the job. (Parking, tolls and
      lodging are expenses either way.) Each job says which (the "Travel
-     Deduction" field); a paid job that doesn't say yet is asked, instead of
-     having mileage logged for it behind your back. */
+     Deduction" field); one that doesn't say yet is asked the moment it comes
+     in — and again when it's paid — instead of having mileage logged for it
+     behind your back. */
 
   /* Jobs whose answer is being saved right now (an IRS-mileage pick waits on a
      route lookup) — so a second tap can't race the first one. */
   const choosing = new Set();
 
-  /** Paid, no travel method chosen, no trip logged → time to ask. Cancelled jobs,
-      jobs in a locked tax year, and jobs whose answer is being saved are left alone. */
+  /** No travel method chosen and no trip logged → the job is asked: the moment it comes in,
+      and again when it's paid if it still doesn't say. Cancelled jobs, jobs in a locked tax
+      year, and jobs whose answer is being saved are left alone. */
   function needsTravelChoice(w) {
     return !!w && !w.travelMethod && w.status !== "Cancelled" && !choosing.has(w.id) &&
-      isPaid(w) && !hasMileage(w) && !Store.recordLocked(w) && !tripYearLocked(w);
+      !hasMileage(w) && !Store.recordLocked(w) && !tripYearLocked(w);
   }
 
   /** Every job waiting on that answer, oldest trip first. */
@@ -431,7 +441,7 @@ const WO = (() => {
       case TM.NONE:
         return "No travel on this job";
       default:
-        return L.mileage.length ? `IRS mileage — ${miles}` : isPaid(w) ? "Not chosen yet — IRS mileage or expenses?" : "You'll be asked when the job is paid";
+        return L.mileage.length ? `IRS mileage — ${miles}` : "Not chosen yet — IRS mileage or expenses?";
     }
   }
 
@@ -514,6 +524,14 @@ const WO = (() => {
       or open an expense form so the costs get entered (Expenses). */
   function applyTravelChoice(w, method, { onDone } = {}) {
     const wo = w.woNumber || "Work order";
+    // the question is now put on every device as a job arrives — if the other device answered
+    // first, this dialog is stale, and a tap on it must not overwrite that answer
+    const already = alreadyAnswered(w);
+    if (already) {
+      UI.toast(`${wo} is already set to ${already} — answered on your other device`, "default", 5000);
+      afterTravelChange(w.id, { onDone });
+      return Promise.resolve({ saved: false, method, status: "already", current: already });
+    }
     if (method === TM.MILEAGE && isPaid(w) && !hasMileage(w)) UI.toast("🚗 Calculating this job's round-trip mileage…");
     return chooseTravel(w, method).then(r => {
       afterTravelChange(w.id, { onDone });
@@ -524,8 +542,14 @@ const WO = (() => {
       else if (gap) UI.toast(`${wo} set to IRS mileage, but no trip was logged — ${gap}`, "error", 7000);
       else if (method === TM.MILEAGE) UI.toast(`${wo}: IRS mileage${hasMileage(w) ? " — trip already logged" : " — the round trip is logged when the job is paid"}`, "success");
       else if (method === TM.EXPENSES) {
-        UI.toast(`💳 ${wo}: travel counts as expenses — no mileage logged`, "success", 4500);
-        if (!linked(w).expenses.length) openTravelExpense(w, { onDone });
+        const noExpenses = !linked(w).expenses.length;
+        if (noExpenses && tripDone(w)) {
+          // the trip happened — capture what it cost now
+          UI.toast(`💳 ${wo}: travel counts as expenses — no mileage logged`, "success", 4500);
+          openTravelExpense(w, { onDone });
+        } else {
+          UI.toast(`💳 ${wo}: travel counts as expenses — no mileage logged${noExpenses ? ". Add the rental, flight or rideshare as expenses on the job once you have them" : ""}`, "success", 6000);
+        }
       } else UI.toast(`${wo}: no travel — nothing to log`, "success");
       return r;
     }).catch(e => UI.toast(`Couldn't save the travel choice — ${e.message}`, "error", 6000));
@@ -534,9 +558,17 @@ const WO = (() => {
   /* Jobs with a travel question on screen right now — never two prompts for one job. */
   const asking = new Set();
 
-  /** Ask how travel counts on one or more paid jobs. One job: answering closes the
-      dialog. Several: each row is answered in place. onDone: see afterTravelChange. */
-  function openTravelChooser(list, { onDone } = {}) {
+  /** The job's current travel method if it has one — i.e. the dialog showing the question is
+      stale (answered meanwhile, usually on the other device). "" when it still needs an answer. */
+  function alreadyAnswered(w) {
+    const cur = Store.get("workOrder", w.id);
+    return (cur && cur.travelMethod) || "";
+  }
+
+  /** Ask how travel counts on one or more jobs — as they come in, or once paid. One job:
+      answering closes the dialog. Several: each row is answered in place. onDone: see
+      afterTravelChange. arrived: the jobs just came in (wording only). */
+  function openTravelChooser(list, { onDone, arrived = false } = {}) {
     list = (list || []).filter(w => w && !asking.has(w.id));
     if (!list.length) return null;
     const esc = U.escapeHtml;
@@ -554,7 +586,10 @@ const WO = (() => {
       return `<div class="travel-row" data-travel-row="${esc(w.id)}">
         <div class="travel-job">
           <div class="travel-job-title">${esc(w.woNumber || "Work order")}${w.jobType ? " · " + esc(w.jobType) : ""}${w.insuredName ? ` <span>· ${esc(U.truncate(w.insuredName, 30))}</span>` : ""}</div>
-          <div class="travel-job-sub">${where ? "📍 " + esc(U.truncate(where, 64)) : "No loss-location address"} · trip ${esc(U.fmtDateShort(tripDateFor(w)))}</div>
+          <div class="travel-job-sub">${where ? "📍 " + esc(U.truncate(where, 64)) : "No loss-location address"} · ${
+            w.inspectionDate ? "inspection " + esc(U.fmtDateShort(w.inspectionDate))
+            : isPaid(w) ? "trip " + esc(U.fmtDateShort(tripDateFor(w)))
+            : "assigned " + esc(U.fmtDateShort(w.dateAssigned || tripDateFor(w)))}</div>
           ${ex.length ? `<div class="travel-job-sub">💳 ${ex.length} expense${ex.length > 1 ? "s" : ""} already linked (${esc(U.money(U.sum(ex, e => e.amount)))})</div>` : ""}
         </div>
         <div class="travel-choices" data-travel-choices>${choices()}</div>
@@ -564,13 +599,13 @@ const WO = (() => {
 
     const m = UI.modal({
       title: single
-        ? `🚗 ${esc(list[0].woNumber || "Work order")} is paid — IRS mileage or expenses?`
-        : `🚗 IRS mileage or expenses? — ${list.length} paid jobs`,
+        ? `🚗 ${esc(list[0].woNumber || "Work order")}${isPaid(list[0]) ? " is paid" : arrived ? " just came in" : ""} — IRS mileage or expenses?`
+        : `🚗 IRS mileage or expenses? — ${list.length} ${arrived ? "new " : ""}jobs`,
       body: `
-        <p class="travel-intro">How should the trip to the loss location count on your taxes?</p>
+        <p class="travel-intro">How do you get to the loss location — your own vehicle, or a rental, flight or rideshare — and how should that count on your taxes?</p>
         <ul class="travel-help">
-          <li><strong>🚗 IRS mileage</strong> — you drove your own vehicle. The round trip from your home base is logged at the IRS rate ($${rate.toFixed(2)}/mi), which covers the car's running costs — so don't also log its gas or repairs.</li>
-          <li><strong>💳 Expenses</strong> — you didn't drive your own vehicle: rental car and its fuel, flight, rideshare… Enter what getting there actually cost as expenses on the job. No mileage is logged.</li>
+          <li><strong>🚗 IRS mileage</strong> — you drive your own vehicle. The round trip from your home base is logged at the IRS rate ($${rate.toFixed(2)}/mi) once the job is paid; that covers the car's running costs, so don't also log its gas or repairs.</li>
+          <li><strong>💳 Expenses</strong> — you don't drive your own vehicle: rental car and its fuel, flight, rideshare… Enter what getting there actually costs as expenses on the job. No mileage is logged.</li>
           <li>Either way, <strong>parking, tolls, lodging and meals</strong> still go in as expenses on the job.</li>
         </ul>
         <div class="travel-list">${list.map(row).join("")}</div>
@@ -578,7 +613,8 @@ const WO = (() => {
       footer: `<button class="btn" id="travel-later">${single ? "Decide later" : "Done"}</button>`,
       onClose: () => {
         list.forEach(w => asking.delete(w.id));
-        if (single && !chosen) UI.toast(`${list[0].woNumber || "The job"} stays on your to-do list until you choose — Dashboard or the job's page`, "default", 4500);
+        const still = single && !chosen && Store.get("workOrder", list[0].id);
+        if (still && needsTravelChoice(still)) UI.toast(`${still.woNumber || "The job"} stays on your to-do list until you choose — Dashboard or the job's page`, "default", 4500);
         if (!single) { if (onDone) onDone(); else App.rerenderIfIdle(); }
       },
     });
@@ -587,6 +623,8 @@ const WO = (() => {
     /** Several jobs: answer one row and show how it went, right in the row. */
     function answerRow(rowEl, w, method) {
       const box = rowEl.querySelector("[data-travel-choices]");
+      const already = alreadyAnswered(w);
+      if (already) { box.innerHTML = `<span class="travel-status ok">✓ already set to ${esc(already)} — answered on your other device</span>`; return; }
       box.innerHTML = `<span class="travel-status">${method === TM.MILEAGE && isPaid(w) && !hasMileage(w) ? "🚗 Calculating the round trip…" : "Saving…"}</span>`;
       chooseTravel(w, method).then(r => {
         const gap = r.saved ? mileageGap(w, r) : "";
@@ -614,6 +652,78 @@ const WO = (() => {
       else answerRow(rowEl, w, method);
     });
     return m;
+  }
+
+  /* ---- asking the moment a job comes in ------------------------------------
+     The question is put when a job arrives, from wherever it comes: the form,
+     an FCGA PDF import, Ledger (the intake agent's inbox on the desktop), or a
+     sync from the other device. A job added here by hand is asked right away.
+     Jobs that show up in the background are asked at the next idle moment (no
+     form open, nothing being typed). Each device remembers which jobs it has
+     seen, so nothing is asked twice — and the jobs already on the books when
+     this build arrived aren't sprung on you all at once (they wait on the
+     dashboard's list and on their own page). Per browser, never synced. */
+  const SEEN_KEY = "anstett_wo_seen";
+  const seenIds = () => { try { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY)) || []); } catch (e) { return new Set(); } };
+  const seenExists = () => { try { return localStorage.getItem(SEEN_KEY) !== null; } catch (e) { return false; } };
+  const saveSeen = set => { try { localStorage.setItem(SEEN_KEY, JSON.stringify([...set].slice(-6000))); } catch (e) { /* full — no matter */ } };
+  const askQueue = new Set();   // ids waiting for an idle moment
+
+  /** Count every work order now on the books as seen — nobody is asked about them.
+      For a restore, demo data, a wipe, and the first run of this build. */
+  function reseedArrivals() {
+    saveSeen(new Set(Store.all("workOrder").map(w => w.id)));
+    askQueue.clear();
+  }
+
+  /** First run of this build on a device: what's on the books now counts as seen, nothing is
+      asked. Runs before the first sync pull, so a pull can't be mistaken for history. */
+  function seedArrivals() { if (!seenExists()) reseedArrivals(); }
+
+  /** Work orders that arrived since the last look (Ledger, a sync, an import) get the
+      travel question queued. → the new records. */
+  function noticeArrivals() {
+    if (!seenExists()) { reseedArrivals(); return []; }
+    const seen = seenIds();
+    const fresh = Store.all("workOrder").filter(w => !seen.has(w.id));
+    if (!fresh.length) return fresh;
+    // A device with no history (fresh install, "Start fresh", "Erase everything") that suddenly
+    // holds several jobs got them from a sync or a restore: that's the books, not new arrivals.
+    // Remember them without asking — they wait on the dashboard's list. A single first job is asked.
+    if (!seen.size && fresh.length > 1) { reseedArrivals(); return []; }
+    fresh.forEach(w => seen.add(w.id));
+    saveSeen(seen);
+    askWhenIdle(fresh.map(w => w.id));
+    return fresh;
+  }
+
+  /** Ask about these jobs as soon as nothing else is going on. */
+  function askWhenIdle(ids) {
+    ids.forEach(id => askQueue.add(id));
+    flushTravelAsk();
+  }
+
+  /** Put the queued question now if the app is idle. → true when the dialog opened. */
+  function flushTravelAsk() {
+    if (!askQueue.size) return false;
+    if (document.getElementById("modal-root").children.length || document.getElementById("sheet-root").children.length) return false;
+    const ae = document.activeElement;
+    if (ae && /INPUT|TEXTAREA|SELECT/.test(ae.tagName)) return false;
+    const list = U.sortBy([...askQueue].map(id => Store.get("workOrder", id)).filter(needsTravelChoice), tripDateFor);
+    askQueue.clear();
+    if (!list.length) return false;
+    openTravelChooser(list, { arrived: true });
+    return true;
+  }
+
+  /** A job the user just added on this device (the form, a PDF import): ask right away,
+      once its form has closed. */
+  function askOnArrival(w) {
+    if (seenExists()) { const seen = seenIds(); seen.add(w.id); saveSeen(seen); }
+    setTimeout(() => {
+      const cur = Store.get("workOrder", w.id);
+      if (cur && needsTravelChoice(cur)) openTravelChooser([cur], { arrived: true });
+    }, 0);
   }
 
   /** Switched a job to expenses / no travel after a trip was already auto-logged:
@@ -653,8 +763,10 @@ const WO = (() => {
     const loggedMi = U.round2(U.sum(billableTrips, m => Store.tripDeduction(m) + (Number(m.parking) || 0) + (Number(m.tolls) || 0)));
     const flatMi = w.mileageReimbType === "Flat fee" ? (Number(w.mileageFlatFee) || 0) : 0;
     const miReimb = flatMi || loggedMi;
-    // when mileage is billable per-mile but no trips are logged, calculate from the route
-    const autoCalc = w.mileageAllowed && w.mileageReimbType !== "Flat fee" && !billableTrips.length && !!(w.lossLocation || "").trim();
+    // when mileage is billable per-mile but no trips are logged, calculate from the route —
+    // unless the job's travel counts as expenses or no travel: you didn't drive there
+    const drove = w.travelMethod !== TM.EXPENSES && w.travelMethod !== TM.NONE;
+    const autoCalc = drove && w.mileageAllowed && w.mileageReimbType !== "Flat fee" && !billableTrips.length && !!(w.lossLocation || "").trim();
     const exReimb = U.round2(U.sum(L.expenses.filter(e => e.reimbursable && !e.reimbursed), e => e.amount));
     const nextNum = `INV-${App.viewYear()}-${String(Store.all("invoice").length + 1).padStart(3, "0")}`;
     const terms = (client && client.paymentTerms) || Store.state.settings.defaultPaymentTerms || "Net 30";
@@ -697,6 +809,8 @@ const WO = (() => {
           UI.toast(`Mileage not auto-calculated (${e.message}). Use 📍 Calculate on the field.`, "error", 6000);
         });
       }
+    } else if (!drove && w.mileageAllowed && w.mileageReimbType !== "Flat fee" && !billableTrips.length && m) {
+      UI.toast(`Mileage line left at ${U.money(miReimb)} — this job's travel counts as ${w.travelMethod === TM.EXPENSES ? "expenses" : "no travel"}, so no route was calculated. Fill it in yourself if you did drive.`, "default", 6500);
     }
     return m;
   }
@@ -754,7 +868,7 @@ const WO = (() => {
         ${badges.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">${badges.map(x => UI.badge(x.text, x.color)).join("")}</div>` : ""}
         ${askTravel ? `
         <div class="travel-ask" id="wo-travel-ask">
-          <div class="travel-ask-text"><strong>🚗 IRS mileage or expenses?</strong> This job is paid — choose how getting to the loss location counts on your taxes. Drove your own vehicle: IRS mileage. Rental car, flight or rideshare: expenses. (Parking, tolls and lodging are expenses either way.)</div>
+          <div class="travel-ask-text"><strong>🚗 IRS mileage or expenses?</strong> ${isPaid(w) ? "This job is paid — choose" : "Choose"} how getting to the loss location counts on your taxes. Your own vehicle: IRS mileage${isPaid(w) ? "" : " (the round trip is logged when the job is paid)"}. Rental car, flight or rideshare: expenses. (Parking, tolls and lodging are expenses either way.)</div>
           <div class="travel-choices">
             <button type="button" class="btn btn-sm btn-primary" data-travel-pick="${U.escapeHtml(TM.MILEAGE)}">🚗 IRS mileage</button>
             <button type="button" class="btn btn-sm" data-travel-pick="${U.escapeHtml(TM.EXPENSES)}">💳 Expenses</button>
@@ -925,7 +1039,8 @@ const WO = (() => {
 
   return { openEditor, openDetail, duplicate, createInvoiceFrom, warnings, jobFinancials, feeText, linked, changeStatus, openStatusSheet, expectedFee, isPendingInvoice, billingState, calcRouteMileageReimb, mileageBillRate, stateSource, stateSplitText,
     lossAddress, openDirections, isPaid, tripDateFor, pendingAutoMileage, autoLogMileage, autoLogMileageOnPaid, backfillPaidMileage, autoMileageSweep, skipList, skipClear, routeStart,
-    needsTravelChoice, travelChoicePending, travelText, chooseTravel, openTravelChooser, openTravelExpense };
+    needsTravelChoice, travelChoicePending, travelText, chooseTravel, openTravelChooser, openTravelExpense,
+    noticeArrivals, reseedArrivals, seedArrivals, askWhenIdle, flushTravelAsk };
 })();
 
 Views.workorders = {

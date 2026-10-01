@@ -514,6 +514,106 @@ const UI = (() => {
     return s;
   }
 
+  /* ================= Number row for the phone keyboard ================= */
+  /* iOS keeps the digits on a second keyboard layer, so searching for a work
+     order or claim number ("21688") meant 123 → one digit → back to letters,
+     for every digit. This is a fixed row of digit keys that sits just above
+     the on-screen keyboard while a list's search box has focus — touch
+     screens only, like a navigation app's keypad — so numbers are always one
+     tap away. A tap inserts at the caret and never takes focus off the box,
+     so the keyboard stays exactly where it is. */
+  const NumBar = (() => {
+    let el = null, input = null, wired = false;
+    const touch = () => !!window.matchMedia && matchMedia("(pointer: coarse)").matches;
+
+    function ensure() {
+      if (el) return el;
+      el = document.createElement("div");
+      el.className = "numbar";
+      el.hidden = true;
+      el.setAttribute("role", "group");
+      el.setAttribute("aria-label", "Number keys");
+      el.innerHTML = [..."1234567890"].map(d => `<button type="button" class="numbar-key" data-num="${d}" tabindex="-1">${d}</button>`).join("") +
+        `<button type="button" class="numbar-key numbar-del" data-num="del" tabindex="-1" aria-label="Delete">⌫</button>`;
+      // Act on the press itself and swallow its default, so the search box keeps
+      // focus and the keyboard stays open. preventDefault on touchstart also
+      // suppresses the synthesized mouse events, so one tap acts exactly once.
+      const press = e => {
+        e.preventDefault();
+        const key = e.target.closest("[data-num]");
+        if (!key || !input || !input.isConnected) return;
+        key.classList.add("pressed");
+        setTimeout(() => key.classList.remove("pressed"), 130);
+        type(key.getAttribute("data-num"));
+      };
+      el.addEventListener("touchstart", press, { passive: false });
+      el.addEventListener("mousedown", press);
+      (document.getElementById("app") || document.body).appendChild(el);
+      return el;
+    }
+
+    /** Insert a digit (or delete backwards) at the caret, as if it were typed. */
+    function type(k) {
+      const len = input.value.length;
+      const s = input.selectionStart ?? len, e = input.selectionEnd ?? s;
+      if (k === "del") {
+        if (s !== e) input.setRangeText("", s, e, "end");
+        else if (s > 0) input.setRangeText("", s - 1, s, "end");
+        else return;
+      } else {
+        input.setRangeText(k, s, e, "end");
+      }
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+
+    /** Sit on the bottom edge of what's visible — right above the keyboard when it's up. */
+    function place() {
+      if (!el || el.hidden) return;
+      if (input && !input.isConnected) { hide(); return; }
+      const vv = window.visualViewport;
+      if (vv) {
+        el.classList.toggle("kb-up", window.innerHeight - vv.height > 120);
+        el.style.top = Math.max(0, Math.round(vv.offsetTop + vv.height - el.offsetHeight)) + "px";
+        el.style.bottom = "auto";
+      } else {
+        el.classList.remove("kb-up");
+        el.style.top = "auto";
+        el.style.bottom = "0";
+      }
+    }
+
+    function show(inp) {
+      if (!touch()) return;
+      input = inp;
+      ensure().hidden = false;
+      place();
+      requestAnimationFrame(place);
+      setTimeout(place, 350);   // iOS reports the keyboard's height a beat after focus
+    }
+    function hide(inp) {
+      if (inp && input && inp !== input) return;
+      input = null;
+      if (el) el.hidden = true;
+    }
+
+    /** Give a search box the number row while it has focus. */
+    function attach(inp) {
+      inp.addEventListener("focus", () => show(inp));
+      inp.addEventListener("blur", () => hide(inp));
+      if (document.activeElement === inp) show(inp);
+      if (wired) return;
+      wired = true;
+      const vv = window.visualViewport;
+      if (vv) { vv.addEventListener("resize", place); vv.addEventListener("scroll", place); }
+      window.addEventListener("resize", place);
+      window.addEventListener("scroll", place, { passive: true });
+      // focus moved somewhere else (a tapped row opened a form, say) — the box is done
+      document.addEventListener("focusin", e => { if (input && e.target !== input) hide(); });
+    }
+
+    return { attach, hide };
+  })();
+
   /**
    * listView(container, cfg)
    * cfg: {
@@ -534,10 +634,19 @@ const UI = (() => {
     const stateLV = initListState(stateKey, cfg);
     if (stateKey) listMemory[stateKey] = stateLV;
 
+    // The toolbar and the results are two separate pieces, so typing in the
+    // search box redraws only the results. Rebuilding the box under the
+    // user's fingers on every keystroke — and re-focusing the new one — is
+    // what made the phone lag and flip its keyboard from numbers back to
+    // letters after each digit.
+    container.innerHTML = `<div class="toolbar" data-lv-toolbar></div><div data-lv-results></div>`;
+    const toolbarEl = container.querySelector("[data-lv-toolbar]");
+    const resultsEl = container.querySelector("[data-lv-results]");
+
     // close any open multi-filter panel when tapping elsewhere; self-detaches once this view is gone
     function onDocClick(e) {
       if (!container.isConnected) { document.removeEventListener("click", onDocClick); return; }
-      if (stateLV.openMulti && !e.target.closest(".lv-multifilter")) { stateLV.openMulti = null; render(); }
+      if (stateLV.openMulti && !e.target.closest(".lv-multifilter")) { stateLV.openMulti = null; if (renderToolbar()) renderResults(); }
     }
     document.addEventListener("click", onDocClick);
 
@@ -560,8 +669,29 @@ const UI = (() => {
       return rs;
     }
 
-    function render() {
-      const rs = rows();
+    const narrowed = () => !!stateLV.q || Object.values(stateLV.filters).some(v => Array.isArray(v) ? v.length : v);
+
+    /* The record count and the Clear button live in the toolbar but depend on the
+       rows, so renderResults() works them out and both renderers paint them. */
+    let slots = { count: "", clear: false };
+    function paintSlots() {
+      toolbarEl.querySelector("[data-lv-count]").textContent = slots.count;
+      const slot = toolbarEl.querySelector("[data-lv-clear-slot]");
+      slot.innerHTML = slots.clear
+        ? `<button type="button" class="btn btn-sm btn-ghost" data-lv-clear title="Clear the search and every filter">✕ Clear</button>` : "";
+      const btn = slot.querySelector("[data-lv-clear]");
+      if (btn) btn.addEventListener("click", clearAll);
+    }
+    function clearAll() {
+      const live = toolbarEl.querySelector("[data-lv-search]");
+      if (live) live.value = "";   // the rebuilt box is seeded from this one
+      stateLV.q = ""; stateLV.filters = {}; stateLV.openMulti = null;
+      render();
+    }
+
+    /** The search box, the filters and the Clear/count slots. Redrawn when a filter
+        changes or a chip panel opens or closes — never while the user is typing. */
+    function renderToolbar() {
       const filterSelects = (cfg.filters || []).map(f => {
         let opts = typeof f.options === "function" ? f.options() : f.options;
         // a kept filter whose option has since gone (e.g. the last job in that state
@@ -606,22 +736,71 @@ const UI = (() => {
           }).join("")}</select>`;
       }).join("");
 
-      if (stateKey) storeListState(stateKey, stateLV);   // after the labels above are current
-      // filters now stick around, so say so when they're what's hiding everything
-      const narrowed = !!stateLV.q || Object.values(stateLV.filters).some(v => Array.isArray(v) ? v.length : v);
-      const total = narrowed ? cfg.data().length : rs.length;
-      const hidden = rs.length ? 0 : total;
-      // "3 of 7" while narrowed, so a record just saved that the filters hide isn't a mystery
-      const countText = narrowed && total !== rs.length ? `${rs.length} of ${total} records` : `${rs.length} record${rs.length === 1 ? "" : "s"}`;
-      container.innerHTML = `
-        <div class="toolbar">
-          <div class="search-box"><input type="text" placeholder="Search…" value="${U.escapeHtml(stateLV.q)}" data-lv-search></div>
+      // a keystroke reaches stateLV.q only after the debounce below; a redraw inside that
+      // window must carry what's typed, so the box, the rows and the state agree
+      const live = toolbarEl.querySelector("[data-lv-search]");
+      const pending = !!live && live.value !== stateLV.q;   // typed, debounce not fired yet
+      if (pending) stateLV.q = live.value;
+      // a redraw under a tap on the search box (it closed a chip panel) must hand focus back
+      const hadFocus = document.activeElement && document.activeElement.hasAttribute("data-lv-search") && toolbarEl.contains(document.activeElement);
+      toolbarEl.innerHTML = `
+          <div class="search-box"><input type="text" placeholder="Search…" value="${U.escapeHtml(stateLV.q)}" data-lv-search
+            autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" aria-label="Search this list"></div>
           ${filterSelects}
           ${cfg.toolbarExtra || ""}
-          ${narrowed ? `<button type="button" class="btn btn-sm btn-ghost" data-lv-clear title="Clear the search and every filter">✕ Clear</button>` : ""}
-          <span style="margin-left:auto;font-size:12px;color:var(--text-3);flex:none">${countText}</span>
-        </div>
-        ${rs.length === 0 ? (hidden ? `<div class="empty-state">
+          <span data-lv-clear-slot></span>
+          <span style="margin-left:auto;font-size:12px;color:var(--text-3);flex:none" data-lv-count></span>`;
+
+      const search = toolbarEl.querySelector("[data-lv-search]");
+      search.addEventListener("input", U.debounce(() => {
+        if (!search.isConnected) return;   // the toolbar was redrawn meanwhile and took this text with it
+        if (search.value === stateLV.q) return;
+        stateLV.q = search.value;
+        renderResults();
+      }, 120));
+      NumBar.attach(search);
+      if (hadFocus) { search.focus(); search.setSelectionRange(search.value.length, search.value.length); }
+
+      toolbarEl.querySelectorAll("[data-filter]").forEach(sel => sel.addEventListener("change", e => {
+        stateLV.filters[sel.getAttribute("data-filter")] = e.target.value; render();
+      }));
+      toolbarEl.querySelectorAll("[data-mf-toggle]").forEach(btn => btn.addEventListener("click", () => {
+        const id = btn.getAttribute("data-mf-toggle");
+        stateLV.openMulti = stateLV.openMulti === id ? null : id;
+        if (renderToolbar()) renderResults();   // the panel changes no rows — unless text was pending
+      }));
+      toolbarEl.querySelectorAll("[data-mf-id]").forEach(btn => btn.addEventListener("click", () => {
+        const id = btn.getAttribute("data-mf-id");
+        const val = btn.getAttribute("data-mf-val");
+        const cur = new Set(stateLV.filters[id] || []);
+        cur.has(val) ? cur.delete(val) : cur.add(val);
+        stateLV.filters[id] = [...cur];
+        render();
+      }));
+      toolbarEl.querySelectorAll("[data-mf-all]").forEach(btn => btn.addEventListener("click", () => {
+        stateLV.filters[btn.getAttribute("data-mf-all")] = [];
+        render();
+      }));
+      paintSlots();
+      return pending;   // the caller must redraw the rows for the text it just absorbed
+    }
+
+    /** The rows (table + cards, or the empty state), plus the record count and
+        the Clear button in the toolbar — everything that depends on the search. */
+    function renderResults() {
+      const rs = rows();
+      // filters stick around, so say so when they're what's hiding everything
+      const nar = narrowed();
+      const total = nar ? cfg.data().length : rs.length;
+      const hidden = rs.length ? 0 : total;
+      // "3 of 7" while narrowed, so a record just saved that the filters hide isn't a mystery
+      slots = {
+        count: nar && total !== rs.length ? `${rs.length} of ${total} records` : `${rs.length} record${rs.length === 1 ? "" : "s"}`,
+        clear: nar,
+      };
+      paintSlots();
+
+      resultsEl.innerHTML = rs.length === 0 ? (hidden ? `<div class="empty-state">
             <div class="es-icon">🔍</div>
             <div class="es-title">Nothing matches these filters</div>
             <div class="es-sub">${hidden} record${hidden === 1 ? " is" : "s are"} hidden by the search or filters above.</div>
@@ -639,53 +818,28 @@ const UI = (() => {
               </tr>`).join("")}</tbody>
           </table></div>
           <div class="record-cards">${rs.map((r, ri) => `<div data-row="${ri}">${cfg.card ? cfg.card(r) : defaultCard(cfg, r)}</div>`).join("")}</div>
-        </div>`}`;
+        </div>`;
+
+      if (stateKey) storeListState(stateKey, stateLV);   // after the toolbar's labels are current
 
       // wire
-      const search = container.querySelector("[data-lv-search]");
-      if (search) search.addEventListener("input", U.debounce(e => { stateLV.q = e.target.value; render(); restoreFocus(); }, 200));
-      container.querySelectorAll("[data-filter]").forEach(sel => sel.addEventListener("change", e => {
-        stateLV.filters[sel.getAttribute("data-filter")] = e.target.value; render();
-      }));
-      container.querySelectorAll("[data-mf-toggle]").forEach(btn => btn.addEventListener("click", () => {
-        const id = btn.getAttribute("data-mf-toggle");
-        stateLV.openMulti = stateLV.openMulti === id ? null : id;
-        render();
-      }));
-      container.querySelectorAll("[data-mf-id]").forEach(btn => btn.addEventListener("click", () => {
-        const id = btn.getAttribute("data-mf-id");
-        const val = btn.getAttribute("data-mf-val");
-        const cur = new Set(stateLV.filters[id] || []);
-        cur.has(val) ? cur.delete(val) : cur.add(val);
-        stateLV.filters[id] = [...cur];
-        render();
-      }));
-      container.querySelectorAll("[data-mf-all]").forEach(btn => btn.addEventListener("click", () => {
-        stateLV.filters[btn.getAttribute("data-mf-all")] = [];
-        render();
-      }));
-      container.querySelectorAll("[data-lv-clear]").forEach(btn => btn.addEventListener("click", () => {
-        stateLV.q = ""; stateLV.filters = {}; stateLV.openMulti = null;
-        render();
-      }));
-      container.querySelectorAll("th[data-col]").forEach(th => th.addEventListener("click", () => {
+      resultsEl.querySelectorAll("[data-lv-clear]").forEach(btn => btn.addEventListener("click", clearAll));
+      resultsEl.querySelectorAll("th[data-col]").forEach(th => th.addEventListener("click", () => {
         const i = Number(th.getAttribute("data-col"));
         if (stateLV.sortCol === i) stateLV.sortDir *= -1; else { stateLV.sortCol = i; stateLV.sortDir = -1; }
-        render();
+        renderResults();
       }));
-      if (cfg.onRow) container.querySelectorAll("[data-row]").forEach(el => el.addEventListener("click", e => {
+      if (cfg.onRow) resultsEl.querySelectorAll("[data-row]").forEach(el => el.addEventListener("click", e => {
         if (e.target.closest("[data-lv-stop]")) return; // in-row action controls handle their own clicks
         cfg.onRow(rs[Number(el.getAttribute("data-row"))]);
       }));
       if (cfg.empty && cfg.empty.actionId && cfg.empty.onAction) {
-        const btn = container.querySelector(`#${cfg.empty.actionId}`);
+        const btn = resultsEl.querySelector(`#${cfg.empty.actionId}`);
         if (btn) btn.addEventListener("click", cfg.empty.onAction);
       }
-      function restoreFocus() {
-        const s = container.querySelector("[data-lv-search]");
-        if (s) { s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
-      }
     }
+
+    function render() { renderToolbar(); renderResults(); }
 
     render();
     return { refresh: render };

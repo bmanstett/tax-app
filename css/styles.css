@@ -680,3 +680,29 @@ table.data-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 @media (pointer: coarse) {
   .travel-choices .btn-sm { min-height: 36px; }
 }
+
+/* Number row above the phone keyboard — shown while a list's search box has focus on a
+   touch screen (see NumBar in ui.js). Positioned from JS off the visual viewport, so it
+   sits right on top of the on-screen keyboard; .kb-up means the keyboard is showing. */
+.numbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 90;
+  display: flex; gap: 5px; padding: 6px 8px calc(6px + var(--safe-bottom));
+  background: var(--bg-elev); border-top: 1px solid var(--border-strong);
+  box-shadow: 0 -4px 16px rgba(15, 23, 42, .12);
+  touch-action: manipulation; user-select: none; -webkit-user-select: none;
+}
+.numbar[hidden] { display: none; }
+.numbar.kb-up { padding-bottom: 6px; }
+.numbar-key {
+  flex: 1 1 0; min-width: 0; min-height: 42px; padding: 0;
+  border: 1px solid var(--border-strong); border-radius: 8px;
+  background: var(--bg); color: var(--text); font: inherit; font-size: 19px; font-weight: 600;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.numbar-key.pressed { background: var(--accent); border-color: var(--accent); color: #fff; }
+.numbar-del { flex: 1.35 1 0; font-size: 17px; }
+[data-theme="dark"] .numbar { box-shadow: 0 -4px 16px rgba(0, 0, 0, .5); }
+/* iOS zooms the page in when a focused field's text is under 16px — not on a search box */
+@media (pointer: coarse) {
+  .toolbar .search-box input { font-size: 16px; }
+}

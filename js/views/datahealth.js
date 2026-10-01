@@ -237,7 +237,7 @@ const DataHealth = (() => {
     if (action === "duplicates") openDuplicates();
     else if (action === "paid-missing-info") openPaymentInfoFix();
     else if (action === "travel-choice") {
-      if (!WO.openTravelChooser(WO.travelChoicePending())) UI.toast("Every paid job already says IRS mileage or expenses ✓", "success");
+      if (!WO.openTravelChooser(WO.travelChoicePending())) UI.toast("Every job already says IRS mileage or expenses ✓", "success");
     }
   }
 

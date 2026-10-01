@@ -7,6 +7,6 @@
 "use strict";
 
 const APP_BUILD = {
-  version: "2026.09.29-2",
-  notes: "Paid jobs now ask: IRS mileage or expenses? And list filters stay set when you change a job's status. IRS mileage logs the round trip for you; Expenses opens a travel-expense form (rental car, flight, rideshare); parking, tolls and lodging are expenses either way.",
+  version: "2026.09.30-1",
+  notes: "Jobs ask IRS mileage or expenses on arrival. Phone search keeps its keyboard + number row. Filters stay put.",
 };

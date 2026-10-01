@@ -67,7 +67,8 @@ SCHEMA.tripTypes = ["Inspection", "Client Meeting", "Supply Run", "Administrativ
    round trip in your own vehicle (logged for you once the job is paid), or
    what getting there actually cost — rental car and its fuel, airfare,
    rideshare — entered as expenses on the job. Parking, tolls and lodging are
-   expenses under either. Blank means "ask me when the job is paid". */
+   expenses under either. Blank means "not decided yet — ask me": the app asks
+   the moment a job comes in, and again when it's paid if it still doesn't say. */
 SCHEMA.travelMethods = { MILEAGE: "IRS mileage", EXPENSES: "Expenses", NONE: "No travel" };
 
 SCHEMA.incomeCategories = ["Service Income (1099)", "Service Income (Invoiced)", "Consulting Income",
@@ -282,10 +283,11 @@ SCHEMA.fields.workOrder = [
   F("_s6b", "Travel Deduction", "section"),
   F("travelMethod", "Account for this job's travel with", "select", {
     options: [SCHEMA.travelMethods.MILEAGE, SCHEMA.travelMethods.EXPENSES, SCHEMA.travelMethods.NONE],
-    emptyLabel: "Ask me when the job is paid",
-    hint: "IRS mileage: you drove your own vehicle — the round trip from your home base is logged when the job is paid " +
-      "(don't also log that vehicle's gas or repairs). Expenses: rental car and its fuel, flight, rideshare — enter what " +
-      "getting there cost as expenses on this job; no mileage is logged. Either way, parking, tolls and lodging go in as expenses." }),
+    emptyLabel: "Not decided yet — ask me",
+    hint: "You're asked when a job comes in, and again when it's paid if this is still blank. IRS mileage: you drive your own " +
+      "vehicle — the round trip from your home base is logged when the job is paid (don't also log that vehicle's gas or repairs). " +
+      "Expenses: rental car and its fuel, flight, rideshare — enter what getting there costs as expenses on this job; no mileage " +
+      "is logged. Either way, parking, tolls and lodging go in as expenses." }),
 
   F("_s7", "Remittance & Delivery", "section"),
   F("reportRemittance", "Report Remittance Instructions", "textarea", { span2: true, placeholder: "e.g. upload PDF to COR system, email to claims@…" }),
