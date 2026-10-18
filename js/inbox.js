@@ -17,6 +17,12 @@
    only. FCGA gives every assignment its own P#, even a second or third
    report on a claim it has worked before, so the same claim number on a
    new P# is always a new work order, never a revision of the old one.
+
+   Expenses: the Crew saves a receipt into Work Orders\CYxx\Receipts\ and
+   writes a "<name>.expense.json" beside it (this app's expense field
+   names; format in README → "Expenses the Crew files"). Ledger adds the
+   expense with the receipt attached, then stamps the file so it is never
+   logged twice. A file it can't take is reported and left for you.
    Needs Chrome or Edge on the computer that holds the folder. Phones
    get the records through the normal GitHub sync.
    ========================================================= */
@@ -34,11 +40,20 @@ const Inbox = (() => {
     "uploadLocation",
   ];
 
+  /** Expense fields Ledger takes from an .expense.json (everything else in "expense" is ignored). */
+  const EXPENSE_FIELDS = [
+    "date", "vendor", "amount", "paymentMethod", "category", "subcategory", "businessPurpose",
+    "sourceRef", "receiptRef", "receiptStatus", "businessUsePct", "deductible", "reimbursable", "reimbursed",
+    "notes", "auditNotes", "cpaReview",
+  ];
+
   let root = null;          // FileSystemDirectoryHandle for "Work Orders"
   let busy = false;
   let lastScanAt = 0;
   let last = null;          // { at, imported: [...], needsPermission, error }
+  let loud = false;         // "Check now": report every expense-file problem, not just new ones
   const warnedTwice = new Set();   // P#s already reported as sitting in two job folders
+  const warnedFiles = new Set();   // expense-file problems already reported this session
 
   const supported = () => typeof window.showDirectoryPicker === "function";
 
@@ -289,6 +304,142 @@ const Inbox = (() => {
     };
   }
 
+  /* ---------- expenses the Crew files in CYxx\Receipts ---------- */
+  // Work Orders\CYxx\Receipts (this year and last, like the job folders)
+  async function* receiptDirs(dir) {
+    const yy = new Date().getFullYear() % 100;
+    for await (const [name, h] of dir.entries()) {
+      const m = /^CY(\d{2})$/i.exec(name);
+      if (h.kind !== "directory" || !m || Number(m[1]) < yy - 1) continue;
+      for await (const [n2, h2] of h.entries()) {
+        if (h2.kind === "directory" && /^receipts$/i.test(n2)) yield { handle: h2, path: `${name}/${n2}` };
+      }
+    }
+  }
+
+  /** A problem with one expense file, said once per session (every time on "Check now"). */
+  function warnOnce(where, r) {
+    const k = `${where}|${r.text}`;
+    if (warnedFiles.has(k) && !loud) return null;
+    warnedFiles.add(k);
+    return r;
+  }
+
+  /** Writes "ledger": { loggedAt, expenseId } into the expense file, so it is never read again. */
+  async function stampExpense(dir, name, data, at, expenseId) {
+    try {
+      const fh = await dir.getFileHandle(name);
+      const w = await fh.createWritable();
+      await w.write(JSON.stringify({ ...data, ledger: { loggedAt: at, expenseId } }, null, 2));
+      await w.close();
+    } catch (e) { console.warn("Ledger: could not stamp", name, e); }
+  }
+
+  /** One .expense.json → one expense. Returns a result line or null when nothing changed. */
+  async function applyExpense(dir, path, name, data) {
+    const where = `${path}/${name}`;
+    if (!data || typeof data !== "object" || !String(data.schema || "").startsWith("ledger-expense/")) {
+      return warnOnce(where, { kind: "check", label: name, text: "not a Ledger expense file (no \"schema\": \"ledger-expense/1\") — left alone" });
+    }
+    const exp = data.expense || {};
+    const key = String(data.intakeKey || `file:${where}`);
+    const now = U.nowISO();
+
+    // Logged before, but the stamp didn't stick: stamp it now and add nothing.
+    const existing = Store.all("expense").find(e => e.intakeKey === key);
+    if (existing) { await stampExpense(dir, name, data, now, existing.id); return null; }
+
+    // What the expense form would refuse, Ledger refuses too.
+    const amount = Number(exp.amount);
+    const problems = [];
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(exp.date || ""))) problems.push("date (YYYY-MM-DD)");
+    if (blank(exp.vendor)) problems.push("vendor");
+    if (!(amount > 0)) problems.push("amount");
+    if (!SCHEMA.expenseCategoryNames.includes(exp.category)) problems.push(`category "${exp.category || ""}" (use one of the app's categories)`);
+    if (!blank(exp.paymentMethod) && !SCHEMA.paymentMethods.includes(exp.paymentMethod)) problems.push(`payment method "${exp.paymentMethod}"`);
+    if (!blank(exp.receiptStatus) && !SCHEMA.receiptStatuses.some(s => s.value === exp.receiptStatus)) problems.push(`receipt status "${exp.receiptStatus}"`);
+    const pct = Number(exp.businessUsePct);
+    if (!blank(exp.businessUsePct) && !(pct >= 0 && pct <= 100)) problems.push(`business-use % "${exp.businessUsePct}" (0–100)`);
+    if (problems.length) return warnOnce(where, { kind: "check", label: name, text: `not logged — fix ${problems.join(", ")}` });
+
+    // A named receipt must be in the same folder; until it is, the expense waits.
+    let file = null;
+    if (!blank(data.receipt)) {
+      try { file = await (await dir.getFileHandle(String(data.receipt))).getFile(); }
+      catch (e) { return warnOnce(where, { kind: "check", label: name, text: `waiting for its receipt, ${data.receipt}, in ${path}` }); }
+    }
+
+    // The defaults the expense form fills in (deductible, 100% business use, receipt Missing), then the file's values.
+    const vals = {};
+    for (const f of SCHEMA.fields.expense) {
+      if (f.key.startsWith("_") || f.default === undefined) continue;
+      vals[f.key] = typeof f.default === "function" ? f.default() : f.default;
+    }
+    for (const f of EXPENSE_FIELDS) if (!blank(exp[f])) vals[f] = exp[f];
+    vals.amount = U.round2(amount);
+    if (!blank(exp.businessUsePct)) vals.businessUsePct = pct;
+
+    let linked = "";
+    if (!blank(data.projectNumber)) {
+      const pn = pnOf(data.projectNumber);
+      const wo = pn ? Store.all("workOrder").find(w => pnOf(w.projectNumber) === pn) : null;
+      if (wo) {
+        vals.workOrderId = wo.id;
+        if (wo.clientId) vals.clientId = wo.clientId;
+        linked = ` · linked to ${wo.woNumber || `P#${pn}`}`;
+      } else linked = ` · P#${pn} isn't in the tracker, so it isn't linked`;
+    }
+
+    if (file) {
+      const dataUrl = await Store.Attachments.fileToDataUrl(file);
+      const attId = U.uid("att");
+      await Store.Attachments.put({ id: attId, name: file.name, type: file.type || "application/pdf", dataUrl });
+      vals.attachmentId = attId;
+      vals.attachmentName = file.name;
+      if (!vals.receiptStatus || vals.receiptStatus === "Missing" || vals.receiptStatus === "Referenced") vals.receiptStatus = "Attached";
+      if (blank(vals.receiptRef)) vals.receiptRef = `Work Orders/${path}/${file.name}`;
+    }
+    vals.intakeKey = key;
+    vals.intakeFile = `Work Orders/${where}`;
+
+    const rec = Store.add("expense", vals);
+    if (!rec) {
+      if (vals.attachmentId) await Store.Attachments.delete(vals.attachmentId).catch(() => {});
+      return warnOnce(where, { kind: "error", label: name, text: `tax year ${U.yearOf(vals.date)} is locked — not added` });
+    }
+    await stampExpense(dir, name, data, now, rec.id);
+    return {
+      kind: "expense",
+      label: `${rec.vendor} ${U.money(rec.amount)}`,
+      text: `${rec.category}${rec.attachmentId ? " · receipt attached" : " · no receipt yet"}${linked}`,
+    };
+  }
+
+  /** Every unstamped .expense.json in the Receipts folders → result lines. */
+  async function scanReceipts(rootDir) {
+    const out = [];
+    for await (const { handle, path } of receiptDirs(rootDir)) {
+      for await (const [name, fh] of handle.entries()) {
+        if (fh.kind !== "file" || !/\.expense\.json$/i.test(name)) continue;
+        let data;
+        try { data = JSON.parse(await (await fh.getFile()).text()); }
+        catch (e) {
+          const r = warnOnce(`${path}/${name}`, { kind: "check", label: name, text: "isn't readable JSON — left alone" });
+          if (r) out.push(r);
+          continue;
+        }
+        if (data && data.ledger && data.ledger.loggedAt) continue;   // logged already
+        try {
+          const r = await applyExpense(handle, path, name, data);
+          if (r) out.push(r);
+        } catch (e) {
+          out.push({ kind: "error", label: name, text: e.message || String(e) });
+        }
+      }
+    }
+    return out;
+  }
+
   /* ---------- scan ---------- */
   async function scan({ interactive = false } = {}) {
     if (!supported() || busy) return last;
@@ -301,6 +452,7 @@ const Inbox = (() => {
       return last;
     }
     busy = true;
+    loud = interactive;
     lastScanAt = Date.now();
     const imported = [];
     try {
@@ -331,6 +483,12 @@ const Inbox = (() => {
           imported.push({ kind: "error", label: path, text: e.message || String(e) });
         }
       }
+      // expenses the Crew filed in CYxx\Receipts — a problem here never holds up the job folders
+      try {
+        imported.push(...await scanReceipts(root));
+      } catch (e) {
+        imported.push({ kind: "error", label: "Receipts", text: e.message || String(e) });
+      }
       last = { at: U.nowISO(), imported, needsPermission: false };
       if (imported.length) {
         const head = imported.slice(0, 3).map(r => `${r.label} (${r.kind})`).join(", ");
@@ -341,7 +499,7 @@ const Inbox = (() => {
         // matter only; job.json, the agent log and the P# matching above are untouched by it
         try { WO.noticeArrivals(); } catch (e) { console.warn("Ledger: travel question skipped", e); }
       } else if (interactive) {
-        UI.toast("📥 Ledger checked the job folders — nothing new", "default", 2500);
+        UI.toast("📥 Ledger checked the job and receipt folders — nothing new", "default", 2500);
       }
     } catch (e) {
       console.warn("Inbox scan failed:", e);

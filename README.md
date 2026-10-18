@@ -70,7 +70,7 @@ Clear it anytime: **Settings → Clear ALL data**, then start fresh.
 | **Clients** | Rates, terms, W-9/1099 flags, profitability, average payment time, 1099 reconciliation status |
 | **Invoices** | Flat/hourly billing + mileage & expense reimbursements, aging, partial payments, printable invoice, income reconciliation. Marking one paid (or closing its work order) fills the **payment date with that day and the method with ACH / Direct Deposit** unless you set them yourself, and **asks whether the job's travel counts as IRS mileage (the home-office round trip is logged for you) or as expenses** if the job hasn't said yet |
 | **Income** | All money in, 1099 tracking, **state sourcing** (which state's return each dollar belongs on — see below), and the **1099 Reconciliation tool** (compare 1099s received vs. recorded income) |
-| **Expenses** | Schedule C-style categories, business purpose, **receipt upload right on the expense form** (📷 Take photo / 📁 Choose file with preview) plus **one-tap 📎 Attach on every expense row/card** — no need to open the form; attached receipts open in a viewer from the list; business-use %, reimbursable tracking, CPA-review flags |
+| **Expenses** | Schedule C-style categories, business purpose, **receipt upload right on the expense form** (📷 Take photo / 📁 Choose file with preview) plus **one-tap 📎 Attach on every expense row/card** — no need to open the form; attached receipts open in a viewer from the list; business-use %, reimbursable tracking, CPA-review flags; and **expenses the Crew files in `CYxx\Receipts` are logged by Ledger with the receipt attached** (see below) |
 | **Mileage** | Field-optimized **⚡ Quick trip** logging, **automatic round trips on paid jobs you count as IRS mileage** (badged “Auto” — distance routed from your home base to the loss location), odometer support, per-year IRS rate, substantiation score, CSV log export |
 | **Receipts** | Attach photos/PDFs (stored locally in IndexedDB) or reference cloud/paper locations; missing-receipt report |
 | **Assets** | Equipment purchases flagged for depreciation / Section 179 CPA review |
@@ -98,7 +98,7 @@ Clear it anytime: **Settings → Clear ALL data**, then start fresh.
 - Scanned or copy-protected PDF? Use the **paste-text fallback** in the same dialog
   (open the PDF, Ctrl+A, Ctrl+C, paste).
 
-## Ledger — work-order inbox (intake agent)
+## Ledger — work-order and expense inbox (intake agent)
 
 **Settings → 📥 Ledger**. Ledger is the Tax App's part of the FCGA agent crew. Choose your `Work Orders` folder once on the desktop,
 in Chrome or Edge. If the browser asks, pick *Allow on every visit*.
@@ -129,6 +129,44 @@ previous year's folders, including `Complete`, `Peer Review Pending` and `Workin
   Ledger did alongside the other agents.
 - **Scanned already:** nothing happens. Records carry `intakeKey` (the PDF's hash) and
   `jobFolder`.
+
+### Expenses the Crew files
+
+The same scan logs expenses. The Crew saves the receipt into `Work Orders\CYxx\Receipts\`
+(this year's or last year's) and writes a `<anything>.expense.json` beside it:
+
+```json
+{
+  "schema": "ledger-expense/1",
+  "intakeKey": "walmart-order-2000153-80159274",
+  "receipt": "Monitor.pdf",
+  "projectNumber": "",
+  "expense": {
+    "date": "2026-09-20", "vendor": "Walmart.com", "amount": 1566.19,
+    "paymentMethod": "Credit Card", "category": "Computer Equipment",
+    "subcategory": "Dell UltraSharp U4025QW monitor", "businessPurpose": "…",
+    "sourceRef": "AMEX ending 1003 · Walmart order #2000153-80159274", "notes": "…"
+  }
+}
+```
+
+- **Fields:** `expense` uses this app's expense field names — `date` (YYYY-MM-DD), `vendor`,
+  `amount`, `category` (one of the app's categories, exactly) are required; `paymentMethod`,
+  `subcategory`, `businessPurpose`, `sourceRef`, `receiptRef`, `receiptStatus`,
+  `businessUsePct`, `deductible`, `reimbursable`, `reimbursed`, `notes`, `auditNotes` and
+  `cpaReview` are optional, and anything missing gets the expense form's default (deductible,
+  100% business use, receipt *Missing*).
+- **Receipt:** `receipt` names a file in the same folder; it is attached and the receipt
+  status set to *Attached*. If the file isn't there yet, the expense waits for it. Leave
+  `receipt` out when there isn't one, and the expense goes in as *No receipt*.
+- **Job:** `projectNumber` (optional) links the expense to that work order, e.g. parking on
+  an inspection.
+- **Afterwards:** writes `"ledger": { "loggedAt", "expenseId" }` into the file. A stamped
+  file is never read again, and an expense with the same `intakeKey` is never added twice,
+  even if the stamp couldn't be written. The expense carries `intakeKey` and `intakeFile`.
+- **Can't take it:** a file with a missing or unknown field, no `"schema"`, or a date in a
+  locked tax year is reported once in the Ledger toast (and again whenever you tap
+  **Settings → Ledger → Check now**), and left as it is until it's fixed.
 
 Your phone gets the records through normal sync. The inbox only runs on the computer that
 holds the folder.
