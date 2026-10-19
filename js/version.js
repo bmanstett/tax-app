@@ -7,6 +7,6 @@
 "use strict";
 
 const APP_BUILD = {
-  version: "2026.09.30-1",
-  notes: "Jobs ask IRS mileage or expenses on arrival. Phone search keeps its keyboard + number row. Filters stay put.",
+  version: "2026.10.18-1",
+  notes: "Ledger now logs the expenses the Crew files in your CYxx Receipts folders, with the receipt attached.",
 };
