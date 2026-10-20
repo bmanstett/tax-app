@@ -142,11 +142,11 @@ Views.settings = {
           <div class="card" id="st-inbox-card">
             <div class="card-title">📥 Ledger — work-order &amp; expense inbox (this computer)</div>
             ${!Inbox.supported() ? `
-              <div class="card-sub">Needs Chrome or Edge on the computer that holds your Work Orders folder. Your phone gets these work orders and expenses through sync.</div>
+              <div class="card-sub">Needs Chrome or Edge on the computer that holds your Work Orders folder. Your phone gets these work orders, expenses and utility bills through sync.</div>
             ` : `
               <div class="card-sub" id="st-inbox-status">Checking…</div>
               <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px" id="st-inbox-actions"></div>
-              <div class="hint" style="font-size:11.5px;color:var(--text-3)">Dispatch (the intake agent) files each FCGA work-order email into <em>Work Orders\\CYxx\\P#…</em> with a <em>job.json</em>. The app picks those up when it opens, adds new work orders with the PDF attached (and asks how you'll get to each one — IRS mileage or expenses), and applies FCGA revisions to fields you haven't changed yourself. It also logs the expenses the Crew files in <em>Work Orders\\CYxx\\Receipts</em> (a receipt plus a matching <em>.expense.json</em>), with the receipt attached. Choose your <strong>Work Orders</strong> folder once; if the browser asks, pick <em>Allow on every visit</em>.</div>
+              <div class="hint" style="font-size:11.5px;color:var(--text-3)">Dispatch (the intake agent) files each FCGA work-order email into <em>Work Orders\\CYxx\\P#…</em> with a <em>job.json</em>. The app picks those up when it opens, adds new work orders with the PDF attached (and asks how you'll get to each one — IRS mileage or expenses), and applies FCGA revisions to fields you haven't changed yourself. It also logs the expenses the Crew files in <em>Work Orders\\CYxx\\Receipts</em> (a receipt plus a matching <em>.expense.json</em>), with the receipt attached. The house's utility bills it files in <em>Receipts\\Home Office</em> (a bill plus a matching <em>.office.json</em>) go into the Home Office section's utility-bill log, never into expenses. Choose your <strong>Work Orders</strong> folder once; if the browser asks, pick <em>Allow on every visit</em>.</div>
             `}
           </div>
 

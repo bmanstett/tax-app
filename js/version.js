@@ -7,6 +7,6 @@
 "use strict";
 
 const APP_BUILD = {
-  version: "2026.10.18-1",
-  notes: "Ledger now logs the expenses the Crew files in your CYxx Receipts folders, with the receipt attached.",
+  version: "2026.10.20-1",
+  notes: "Home Office now keeps the house's utility bills — electric, gas, water, internet — and Ledger logs the ones the Crew files in Receipts\\Home Office.",
 };

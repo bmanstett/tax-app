@@ -23,6 +23,12 @@
    names; format in README → "Expenses the Crew files"). Ledger adds the
    expense with the receipt attached, then stamps the file so it is never
    logged twice. A file it can't take is reported and left for you.
+
+   Utility bills: the house's bills (the home office's operating cost) go
+   into Work Orders\CYxx\Receipts\Home Office\ as the bill plus a
+   "<name>.office.json". Ledger adds each to the Home Office section's
+   utility-bill log — never to expenses — with the bill attached, and
+   stamps the file the same way (README → "Utility bills the Crew files").
    Needs Chrome or Edge on the computer that holds the folder. Phones
    get the records through the normal GitHub sync.
    ========================================================= */
@@ -45,6 +51,12 @@ const Inbox = (() => {
     "date", "vendor", "amount", "paymentMethod", "category", "subcategory", "businessPurpose",
     "sourceRef", "receiptRef", "receiptStatus", "businessUsePct", "deductible", "reimbursable", "reimbursed",
     "notes", "auditNotes", "cpaReview",
+  ];
+
+  /** Utility-bill fields Ledger takes from an .office.json's "bill" (everything else is ignored). */
+  const BILL_FIELDS = [
+    "date", "utility", "service", "amount", "billMonth", "dueDate", "account", "property", "paymentNote",
+    "sourceRef", "receiptRef", "receiptStatus", "notes", "auditNotes", "cpaReview",
   ];
 
   let root = null;          // FileSystemDirectoryHandle for "Work Orders"
@@ -325,15 +337,16 @@ const Inbox = (() => {
     return r;
   }
 
-  /** Writes "ledger": { loggedAt, expenseId } into the expense file, so it is never read again. */
-  async function stampExpense(dir, name, data, at, expenseId) {
+  /** Writes "ledger": { loggedAt, expenseId | billId } into the Crew's file, so it is never read again. */
+  async function stampFile(dir, name, data, at, ids) {
     try {
       const fh = await dir.getFileHandle(name);
       const w = await fh.createWritable();
-      await w.write(JSON.stringify({ ...data, ledger: { loggedAt: at, expenseId } }, null, 2));
+      await w.write(JSON.stringify({ ...data, ledger: { loggedAt: at, ...ids } }, null, 2));
       await w.close();
     } catch (e) { console.warn("Ledger: could not stamp", name, e); }
   }
+  const stampExpense = (dir, name, data, at, expenseId) => stampFile(dir, name, data, at, { expenseId });
 
   /** One .expense.json → one expense. Returns a result line or null when nothing changed. */
   async function applyExpense(dir, path, name, data) {
@@ -415,10 +428,97 @@ const Inbox = (() => {
     };
   }
 
-  /** Every unstamped .expense.json in the Receipts folders → result lines. */
+  /** One .office.json → one bill in the Home Office section's utility-bill log (never an expense).
+      Returns a result line or null when nothing changed. */
+  async function applyOfficeBill(dir, path, name, data) {
+    const where = `${path}/${name}`;
+    if (!data || typeof data !== "object" || !String(data.schema || "").startsWith("ledger-office-bill/")) {
+      return warnOnce(where, { kind: "check", label: name, text: "not a Ledger utility-bill file (no \"schema\": \"ledger-office-bill/1\") — left alone" });
+    }
+    const bill = data.bill || {};
+    const key = String(data.intakeKey || `file:${where}`);
+    const now = U.nowISO();
+
+    // Logged before, but the stamp didn't stick: stamp it now and add nothing.
+    const existing = Store.all("officeBill").find(b => b.intakeKey === key);
+    if (existing) { await stampFile(dir, name, data, now, { billId: existing.id }); return null; }
+
+    const amount = Number(bill.amount);
+    const problems = [];
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(bill.date || ""))) problems.push("date (YYYY-MM-DD)");
+    if (blank(bill.utility)) problems.push("utility");
+    if (!(amount > 0)) problems.push("amount");
+    if (!SCHEMA.utilityServices.includes(bill.service)) problems.push(`service "${bill.service || ""}" (one of ${SCHEMA.utilityServices.join(", ")})`);
+    if (!blank(bill.billMonth) && !/^\d{4}-\d{2}$/.test(String(bill.billMonth))) problems.push(`bill month "${bill.billMonth}" (YYYY-MM)`);
+    if (!blank(bill.dueDate) && !/^\d{4}-\d{2}-\d{2}$/.test(String(bill.dueDate))) problems.push(`due date "${bill.dueDate}" (YYYY-MM-DD)`);
+    if (!blank(bill.receiptStatus) && !SCHEMA.receiptStatuses.some(s => s.value === bill.receiptStatus)) problems.push(`receipt status "${bill.receiptStatus}"`);
+    if (problems.length) return warnOnce(where, { kind: "check", label: name, text: `not logged — fix ${problems.join(", ")}` });
+
+    // A named bill copy must be in the same folder; until it is, the bill waits.
+    let file = null;
+    if (!blank(data.receipt)) {
+      try { file = await (await dir.getFileHandle(String(data.receipt))).getFile(); }
+      catch (e) { return warnOnce(where, { kind: "check", label: name, text: `waiting for its bill copy, ${data.receipt}, in ${path}` }); }
+    }
+
+    const vals = {};
+    for (const f of SCHEMA.fields.officeBill) {
+      if (f.key.startsWith("_") || f.default === undefined) continue;
+      vals[f.key] = typeof f.default === "function" ? f.default() : f.default;
+    }
+    for (const f of BILL_FIELDS) if (!blank(bill[f])) vals[f] = bill[f];
+    vals.amount = U.round2(amount);
+
+    if (file) {
+      const dataUrl = await Store.Attachments.fileToDataUrl(file);
+      const attId = U.uid("att");
+      await Store.Attachments.put({ id: attId, name: file.name, type: file.type || "application/pdf", dataUrl });
+      vals.attachmentId = attId;
+      vals.attachmentName = file.name;
+      if (!vals.receiptStatus || vals.receiptStatus === "Missing" || vals.receiptStatus === "Referenced") vals.receiptStatus = "Attached";
+      if (blank(vals.receiptRef)) vals.receiptRef = `Work Orders/${path}/${file.name}`;
+    }
+    vals.intakeKey = key;
+    vals.intakeFile = `Work Orders/${where}`;
+
+    const rec = Store.add("officeBill", vals);
+    if (!rec) {
+      if (vals.attachmentId) await Store.Attachments.delete(vals.attachmentId).catch(() => {});
+      return warnOnce(where, { kind: "error", label: name, text: `tax year ${U.yearOf(vals.date)} is locked — not added` });
+    }
+    await stampFile(dir, name, data, now, { billId: rec.id });
+    return {
+      kind: "bill",
+      label: `${rec.utility} ${U.money(rec.amount)}`,
+      text: `Home Office · ${rec.service}${rec.attachmentId ? " · bill attached" : " · no bill copy yet"}`,
+    };
+  }
+
+  /** Every unstamped .expense.json in the Receipts folders, and every unstamped .office.json in
+      their Home Office folders → result lines. */
   async function scanReceipts(rootDir) {
     const out = [];
     for await (const { handle, path } of receiptDirs(rootDir)) {
+      for await (const [n2, h2] of handle.entries()) {
+        if (h2.kind !== "directory" || !/^home office$/i.test(n2)) continue;
+        for await (const [name, fh] of h2.entries()) {
+          if (fh.kind !== "file" || !/\.office\.json$/i.test(name)) continue;
+          let data;
+          try { data = JSON.parse(await (await fh.getFile()).text()); }
+          catch (e) {
+            const r = warnOnce(`${path}/${n2}/${name}`, { kind: "check", label: name, text: "isn't readable JSON — left alone" });
+            if (r) out.push(r);
+            continue;
+          }
+          if (data && data.ledger && data.ledger.loggedAt) continue;   // logged already
+          try {
+            const r = await applyOfficeBill(h2, `${path}/${n2}`, name, data);
+            if (r) out.push(r);
+          } catch (e) {
+            out.push({ kind: "error", label: name, text: e.message || String(e) });
+          }
+        }
+      }
       for await (const [name, fh] of handle.entries()) {
         if (fh.kind !== "file" || !/\.expense\.json$/i.test(name)) continue;
         let data;
