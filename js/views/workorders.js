@@ -198,10 +198,14 @@ const WO = (() => {
     return Store.mileageRate(U.yearOf(w.inspectionDate || w.dateAssigned || U.todayISO()));
   }
 
-  function routeStart() {
-    const s = Store.state.settings;
-    return (s.homeBase && /\d/.test(s.homeBase)) ? s.homeBase : U.addressLine(s.businessAddress || s.homeBase || "");
-  }
+  /** Where trips start: a street address from Settings (Home base, else the business
+      address), or "" — then nothing is routed (see Store.officeAddress). */
+  const routeStart = () => Store.officeAddress();
+
+  /** An auto-logged drive longer than this each way is refused instead of logged: the
+      longest real one so far is about 190 miles, and a bad start address once produced
+      1,334.8. A longer trip you really drove can still be added by hand. */
+  const MAX_AUTO_ONE_WAY_MI = 500;
 
   /** The job's loss location as a single-line address (blank when there isn't one). */
   const lossAddress = w => U.addressLine(w && w.lossLocation);
@@ -296,7 +300,7 @@ const WO = (() => {
     const to = lossAddress(w);
     if (!to) return { status: "failed", reason: "no loss-location address on the work order" };
     const from = routeStart();
-    if (!from) return { status: "failed", reason: "no home base set in Settings" };
+    if (!from) return { status: "failed", reason: "no street address in Settings (Home base or Business address)" };
     const date = tripDateFor(w);
     if (Store.isYearLocked(U.yearOf(date))) return { status: "skipped", reason: `tax year ${U.yearOf(date)} is locked` };
 
@@ -313,6 +317,8 @@ const WO = (() => {
       return { status: "skipped", reason: notMileageReason(now) };
 
     const oneWay = U.round2(route.miles);
+    if (oneWay > MAX_AUTO_ONE_WAY_MI)
+      return { status: "failed", reason: `the route came out ${U.num(oneWay, 1)} mi each way from ${U.truncate(from, 40)} — check Settings → Home base and the job's address` };
     const miles = U.round2(oneWay * 2);
     const billed = !!w.mileageAllowed;   // the client agreed to cover it, and the job is paid
     const trip = Store.add("mileage", {
@@ -1015,7 +1021,8 @@ const WO = (() => {
         case "directions": openDirections(w); break;
         case "edit": m.close(); openEditor(w); break;
         case "mileage":
-          UI.openForm("mileage", null, { presets: { ...presets, businessPurpose: `Inspection — ${w.jobType || "site"} (${w.woNumber || ""})`.trim(), destination: (w.lossLocation || "").split("\n")[0], reimbursable: !!w.mileageAllowed },
+          // dated to the inspection (the day of the drive), not to today
+          UI.openForm("mileage", null, { presets: { ...presets, ...(w.inspectionDate ? { date: w.inspectionDate } : {}), businessPurpose: `Inspection — ${w.jobType || "site"} (${w.woNumber || ""})`.trim(), destination: (w.lossLocation || "").split("\n")[0], reimbursable: !!w.mileageAllowed },
             onSave: v => { Store.add("mileage", v); UI.toast("Mileage logged", "success"); m.close(); openDetail(w); } });
           break;
         case "expense":

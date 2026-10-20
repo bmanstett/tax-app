@@ -536,6 +536,27 @@ const Store = (() => {
       guarantees a fresh local edit is never overwritten by an older remote copy. */
   function markSettingsChanged() { state.settingsUpdatedAt = U.nowISO(); save(); }
 
+  /** True for settings nobody has filled in: every value still the factory default (the
+      theme, the last-backup date and the year-based values aside). A new install looks like
+      this, and sync never lets it replace a real profile (see Sync's merge). */
+  const FACTORY_IGNORED = ["theme", "lastBackupAt", "taxYear", "mileageRates"];
+  function isFactorySettings(s) {
+    if (!s) return true;
+    const d = defaultSettings();
+    return Object.keys(d).every(k => FACTORY_IGNORED.includes(k) ||
+      JSON.stringify(s[k] === undefined ? d[k] : s[k]) === JSON.stringify(d[k]));
+  }
+
+  /** Where trips are routed from: Settings → Home base when it's a street address, else the
+      business address. "" when neither is one — a label like "Home office" can't be routed
+      (geocoded, it once came out 1,334.8 miles from Alexandria and logged five 2,669.54-mile
+      round trips). */
+  function officeAddress() {
+    const s = state.settings || {};
+    const street = a => (/\d/.test(a || "") ? U.addressLine(a) : "");
+    return street(s.homeBase) || street(s.businessAddress);
+  }
+
   /* ---------- IndexedDB attachments (receipt images/PDFs) ---------- */
   const Attachments = (() => {
     const DB = "anstett_attachments", STORE = "files";
@@ -630,6 +651,7 @@ const Store = (() => {
     findDuplicates, setDuplicateIgnored, statusChangedAt, integrityCheck,
     exportJSON, importJSON, validateImport, resetAll, applySynced,
     isYearLocked, recordLocked, backupDue, markBackedUp, markSettingsChanged,
+    isFactorySettings, officeAddress,
     logAudit, labelFor,
     Attachments,
   };

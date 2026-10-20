@@ -52,6 +52,8 @@ as an off-device backup with full history (every sync is a git commit).
 - **How conflicts resolve:** merged per record — the newest edit of each work order/expense/etc.
   wins; deletions on one device propagate to the others (tombstones). Nothing is ever
   overwritten wholesale.
+- **Settings:** the device that saved Settings last wins. A new install's blank profile never
+  does — a device turning sync on for the first time takes the synced profile.
 - **Safety rails:** sync refuses to write to a public repo, and the token is stored only on
   the device (never in JSON backups or the synced data).
 
@@ -106,7 +108,8 @@ in Chrome or Edge. If the browser asks, pick *Allow on every visit*.
 The intake agent files each FCGA work-order email into `Work Orders\CYxx\P#xxxxx_…\` and
 writes a `job.json` there with this app's work-order field names. Whenever the app opens
 or comes back into focus (and every 5 minutes while it's open), it scans the current and
-previous year's folders, including `Complete`, `Peer Review Pending` and `Working`:
+previous year's folders, including `Complete`, `Peer Review Pending` and `Working`. Only one
+scan runs at a time, even with the app open in two windows, so nothing is logged twice:
 
 - **Matching is by project number (P#) only.** FCGA opens a new P# for every assignment,
   including a supplement or a second or third report on a claim it has worked before, so a
@@ -243,7 +246,12 @@ arrived aren't sprung on you all at once — they wait on the dashboard list.
 
 Routing details:
 
-- Set **Settings → Home base** to a full street address — that's where every trip starts.
+- Every trip starts at **Settings → Home base** when it's a full street address, otherwise at
+  your **Business address**. With neither, nothing is auto-logged — a label like "Home office"
+  can't be routed (it once geocoded to a spot 1,334.8 miles away). An auto-logged route over 500
+  miles each way is refused rather than logged; check the addresses (Settings → Data health
+  lists the jobs), or add a trip that long by hand if you really drove it.
+- **🚗 Add mileage** on a job dates the trip to its inspection; the form still lets you change it.
 - Distances come from free OpenStreetMap services (Nominatim + OSRM, no API key, one lookup a
   second). When a street number isn't on the map it falls back to the street, then the town, and
   says so in the trip notes — check those.

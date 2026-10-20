@@ -133,11 +133,17 @@ const Sync = (() => {
     merged.auditLog = [...(local.auditLog || []), ...(remote.auditLog || []).filter(a => !haveAudit.has(a.id))]
       .sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, 4000);
 
-    // settings: newest stamp wins; theme always stays local
-    if ((remote.settingsUpdatedAt || "") > (local.settingsUpdatedAt || "")) {
+    // settings: newest stamp wins; theme always stays local. A factory-fresh profile never
+    // replaces a real one, whatever its stamp: on 2026-10-13 a new install switching sync on
+    // claimed the settings with its blank profile and wiped the business address, contact
+    // details and invoice defaults on every device. The newer stamp is kept either way, so
+    // the devices settle on the real profile instead of trading it back and forth.
+    const lt = local.settingsUpdatedAt || "", rt = remote.settingsUpdatedAt || "";
+    const lf = Store.isFactorySettings(local.settings), rf = Store.isFactorySettings(remote.settings);
+    if (remote.settings && (lf !== rf ? lf : rt > lt)) {
       merged.settings = { ...remote.settings, theme: (local.settings || {}).theme };
-      merged.settingsUpdatedAt = remote.settingsUpdatedAt;
     }
+    if (rt > lt) merged.settingsUpdatedAt = remote.settingsUpdatedAt;
     // home office: it carries its own updatedAt
     if (((remote.homeOffice || {}).updatedAt || "") > ((local.homeOffice || {}).updatedAt || "")) {
       merged.homeOffice = remote.homeOffice;
@@ -313,8 +319,10 @@ const Sync = (() => {
     cfg.enabled = true;
     cfg.repoFull = repoFull;
     cfg.token = token;
-    // this device's settings are the freshest at the moment sync is switched on
-    Store.state.settingsUpdatedAt = Store.state.settingsUpdatedAt || U.nowISO();
+    // a device with its own filled-in profile claims it as sync is switched on; a new install's
+    // factory profile claims nothing, so the synced profile comes down instead of blanking it
+    if (!Store.state.settingsUpdatedAt && !Store.isFactorySettings(Store.state.settings))
+      Store.state.settingsUpdatedAt = U.nowISO();
     saveCfg();
     setStatus("syncing");
     return sync({ manual: true });

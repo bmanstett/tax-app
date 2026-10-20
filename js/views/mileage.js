@@ -51,10 +51,9 @@ const Mileage = (() => {
     });
     const calcBtn = m.body.querySelector("#qt-calc");
     calcBtn.addEventListener("click", async () => {
-      const s = Store.state.settings;
-      const from = (s.homeBase && /\d/.test(s.homeBase)) ? s.homeBase : (s.businessAddress || s.homeBase || "").replace(/\n/g, ", ");
+      const from = Store.officeAddress();   // a street address, never the "Home office" label
       const to = m.body.querySelector("#qt-dest").value.trim();
-      if (!from) { UI.toast("Set your office address in Settings → Home base first", "error", 5000); return; }
+      if (!from) { UI.toast("Set your office street address in Settings (Home base or Business address) first", "error", 5000); return; }
       if (!to) { UI.toast("Enter the destination first", "error"); return; }
       calcBtn.disabled = true; calcBtn.textContent = "Calculating…";
       try {
