@@ -252,7 +252,7 @@ Routing details:
   can't be routed (it once geocoded to a spot 1,334.8 miles away). An auto-logged route over 500
   miles each way is refused rather than logged; check the addresses (Settings → Data health
   lists the jobs), or add a trip that long by hand if you really drove it. **📍 Calculate** in a
-  trip form or on an invoice asks before using a route that long.
+  trip form asks before using a route that long; on an invoice it's refused (type the amount).
 - **🚗 Add mileage** on a job dates the trip to its inspection; the form still lets you change it.
 - Distances come from free OpenStreetMap services (Nominatim + OSRM, no API key, one lookup a
   second). When a street number isn't on the map it falls back to the street, then the town, and

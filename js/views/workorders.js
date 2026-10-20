@@ -1021,8 +1021,13 @@ const WO = (() => {
         case "mileage":
           // dated to the inspection (the day of the drive), not to today
           UI.openForm("mileage", null, { presets: { ...presets, ...(w.inspectionDate ? { date: w.inspectionDate } : {}), businessPurpose: `Inspection — ${w.jobType || "site"} (${w.woNumber || ""})`.trim(), destination: (w.lossLocation || "").split("\n")[0], reimbursable: !!w.mileageAllowed },
-            // a refused save (a locked tax year) keeps the form open; Store.add has said why
-            onSave: v => { if (!Store.add("mileage", v)) return false; UI.toast("Mileage logged", "success"); m.close(); openDetail(w); } });
+            // a refused save keeps the form open with what was typed
+            onSave: v => {
+              const y = U.yearOf(v.date);
+              if (Store.isYearLocked(y)) { UI.toast(`Tax year ${y} is locked — pick the trip's date in an open year, or unlock ${y} in Settings`, "error", 6000); return false; }
+              if (!Store.add("mileage", v)) return false;
+              UI.toast("Mileage logged", "success"); m.close(); openDetail(w);
+            } });
           break;
         case "expense":
           UI.openForm("expense", null, { presets: { ...presets, businessPurpose: `Job expense — ${w.woNumber || ""}`.trim() },

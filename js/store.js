@@ -133,10 +133,16 @@ const Store = (() => {
     const y = recordYear(rec);
     return !!(y && isYearLocked(y));
   }
+  /* Once per locked year per session: background writers (Ledger, payment backfill) would
+     otherwise repeat it on every scan and launch. */
+  const lockToasted = new Set();
   function lockGuard(rec) {
     const y = recordYear(rec);
     if (y && isYearLocked(y)) {
-      if (typeof UI !== "undefined") UI.toast(`Tax year ${y} is locked. Unlock it in Settings to edit.`, "error", 5000);
+      if (typeof UI !== "undefined" && !lockToasted.has(y)) {
+        lockToasted.add(y);
+        UI.toast(`Tax year ${y} is locked — that change wasn't saved.`, "error", 5000);
+      }
       return true;
     }
     return false;

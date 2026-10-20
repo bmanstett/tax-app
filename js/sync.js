@@ -171,9 +171,13 @@ const Sync = (() => {
     if (lf !== rf) return lf ? takeRemote : keepLocal;
     if (!cfg.lastSyncAt && !lf) {
       if (lt <= rt) return takeRemote;   // the synced profile is the newer one
+      // only values this device filled in: never a blank (a cleared Home base must not erase the
+      // synced one), the theme, the backup date or the year-based defaults (a phone set up last
+      // year would otherwise bring last year's mileage rates)
       const d = Store.defaultSettings(), mine = {};
+      const blankValue = v => v === "" || v == null || (Array.isArray(v) && !v.length);
       for (const k of Object.keys(ls)) {
-        if (k === "theme" || k === "lastBackupAt") continue;
+        if (OVERLAY_SKIPPED.includes(k) || blankValue(ls[k])) continue;
         if (canon(ls[k]) !== canon(d[k])) mine[k] = ls[k];
       }
       return { settings: U.clone({ ...rs, ...mine, theme: ls.theme }), stamp: local.settingsUpdatedAt };
@@ -182,6 +186,8 @@ const Sync = (() => {
     const bare = o => canon({ ...o, theme: null });
     return bare(rs) > bare(ls) ? takeRemote : keepLocal;   // same stamp: the same pick everywhere
   }
+
+  const OVERLAY_SKIPPED = ["theme", "lastBackupAt", "taxYear", "mileageRates"];
 
   /** JSON with object keys sorted, so the same settings compare equal on every device. */
   function canon(v) {
@@ -362,9 +368,13 @@ const Sync = (() => {
   function disable() {
     cfg.enabled = false;
     cfg.token = "";
+    cfg.lastSyncAt = null;   // turning it back on is a first sync again (see mergeSettings)
     saveCfg();
     setStatus("off");
   }
+
+  /** After Clear ALL data: this device starts over, so its next sync is a first sync. */
+  function forgetLastSync() { cfg.lastSyncAt = null; saveCfg(); }
 
   /* ---------- wiring ---------- */
   function init() {
@@ -392,7 +402,7 @@ const Sync = (() => {
   }
 
   return {
-    init, enable, disable,
+    init, enable, disable, forgetLastSync,
     now: () => sync({ manual: true }),
     get config() { return { enabled: cfg.enabled, repoFull: cfg.repoFull, lastSyncAt: cfg.lastSyncAt, hasToken: !!cfg.token }; },
     get lastError() { return lastError; },
