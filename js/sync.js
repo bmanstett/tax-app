@@ -133,11 +133,9 @@ const Sync = (() => {
     merged.auditLog = [...(local.auditLog || []), ...(remote.auditLog || []).filter(a => !haveAudit.has(a.id))]
       .sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, 4000);
 
-    // settings: newest stamp wins; theme always stays local
-    if ((remote.settingsUpdatedAt || "") > (local.settingsUpdatedAt || "")) {
-      merged.settings = { ...remote.settings, theme: (local.settings || {}).theme };
-      merged.settingsUpdatedAt = remote.settingsUpdatedAt;
-    }
+    const s = mergeSettings(local, remote);
+    merged.settings = s.settings;
+    merged.settingsUpdatedAt = s.stamp;
     // home office: it carries its own updatedAt
     if (((remote.homeOffice || {}).updatedAt || "") > ((local.homeOffice || {}).updatedAt || "")) {
       merged.homeOffice = remote.homeOffice;
@@ -151,6 +149,51 @@ const Sync = (() => {
     merged.dupeIgnores = [...new Set([...(local.dupeIgnores || []), ...(remote.dupeIgnores || [])])];
     merged.demoDataLoaded = !!(local.demoDataLoaded || remote.demoDataLoaded);
     return merged;
+  }
+
+  /** Settings travel as one profile: the newer save wins, and the winner keeps its own stamp
+      (an older profile is never re-dated as new, so a later edit elsewhere still beats it).
+      Three guards, after 2026-10-13, when a new install switching sync on blanked the business
+      address, contact details and invoice defaults on every device:
+      - a factory-fresh profile (a new install) never replaces a real one, whatever its stamp;
+      - on this device's first sync, its own newer changes are laid over the synced profile key
+        by key, never the whole profile: a phone that set one tax assumption before turning sync
+        on brings that one value, not its blanks;
+      - equal stamps with different content settle on the same profile on every device.
+      The theme always stays local. → {settings, stamp} */
+  function mergeSettings(local, remote) {
+    const ls = local.settings || {}, rs = remote.settings;
+    const lt = local.settingsUpdatedAt || "", rt = remote.settingsUpdatedAt || "";
+    const keepLocal = { settings: U.clone(ls), stamp: local.settingsUpdatedAt || null };
+    if (!rs) return keepLocal;
+    const takeRemote = { settings: U.clone({ ...rs, theme: ls.theme }), stamp: remote.settingsUpdatedAt || null };
+    const lf = Store.isFactorySettings(ls), rf = Store.isFactorySettings(rs);
+    if (lf !== rf) return lf ? takeRemote : keepLocal;
+    if (!cfg.lastSyncAt && !lf) {
+      if (lt <= rt) return takeRemote;   // the synced profile is the newer one
+      // only values this device filled in: never a blank (a cleared Home base must not erase the
+      // synced one), the theme, the backup date or the year-based defaults (a phone set up last
+      // year would otherwise bring last year's mileage rates)
+      const d = Store.defaultSettings(), mine = {};
+      const blankValue = v => v === "" || v == null || (Array.isArray(v) && !v.length);
+      for (const k of Object.keys(ls)) {
+        if (OVERLAY_SKIPPED.includes(k) || blankValue(ls[k])) continue;
+        if (canon(ls[k]) !== canon(d[k])) mine[k] = ls[k];
+      }
+      return { settings: U.clone({ ...rs, ...mine, theme: ls.theme }), stamp: local.settingsUpdatedAt };
+    }
+    if (lt !== rt) return rt > lt ? takeRemote : keepLocal;
+    const bare = o => canon({ ...o, theme: null });
+    return bare(rs) > bare(ls) ? takeRemote : keepLocal;   // same stamp: the same pick everywhere
+  }
+
+  const OVERLAY_SKIPPED = ["theme", "lastBackupAt", "taxYear", "mileageRates"];
+
+  /** JSON with object keys sorted, so the same settings compare equal on every device. */
+  function canon(v) {
+    if (Array.isArray(v)) return `[${v.map(canon).join(",")}]`;
+    if (v && typeof v === "object") return `{${Object.keys(v).sort().map(k => `${JSON.stringify(k)}:${canon(v[k])}`).join(",")}}`;
+    return JSON.stringify(v === undefined ? null : v);
   }
 
   /** every attachmentId referenced by any record */
@@ -313,8 +356,10 @@ const Sync = (() => {
     cfg.enabled = true;
     cfg.repoFull = repoFull;
     cfg.token = token;
-    // this device's settings are the freshest at the moment sync is switched on
-    Store.state.settingsUpdatedAt = Store.state.settingsUpdatedAt || U.nowISO();
+    // a device with its own filled-in profile claims it as sync is switched on; a new install's
+    // factory profile claims nothing, so the synced profile comes down instead of blanking it
+    if (!Store.state.settingsUpdatedAt && !Store.isFactorySettings(Store.state.settings))
+      Store.state.settingsUpdatedAt = U.nowISO();
     saveCfg();
     setStatus("syncing");
     return sync({ manual: true });
@@ -323,9 +368,13 @@ const Sync = (() => {
   function disable() {
     cfg.enabled = false;
     cfg.token = "";
+    cfg.lastSyncAt = null;   // turning it back on is a first sync again (see mergeSettings)
     saveCfg();
     setStatus("off");
   }
+
+  /** After Clear ALL data: this device starts over, so its next sync is a first sync. */
+  function forgetLastSync() { cfg.lastSyncAt = null; saveCfg(); }
 
   /* ---------- wiring ---------- */
   function init() {
@@ -353,7 +402,7 @@ const Sync = (() => {
   }
 
   return {
-    init, enable, disable,
+    init, enable, disable, forgetLastSync,
     now: () => sync({ manual: true }),
     get config() { return { enabled: cfg.enabled, repoFull: cfg.repoFull, lastSyncAt: cfg.lastSyncAt, hasToken: !!cfg.token }; },
     get lastError() { return lastError; },

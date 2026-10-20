@@ -114,7 +114,8 @@ const Store = (() => {
       saveListeners.forEach(fn => fn(new Date()));
     } catch (e) {
       console.error("Save failed:", e);
-      if (window.UI) UI.toast("⚠️ Save failed — storage may be full. Export a backup now.", "error", 6000);
+      // UI is a top-level const, not a window property: `window.UI` was always false, so this never showed
+      if (typeof UI !== "undefined") UI.toast("⚠️ Save failed — storage may be full. Export a backup now.", "error", 6000);
     }
   }, 150);
 
@@ -132,10 +133,16 @@ const Store = (() => {
     const y = recordYear(rec);
     return !!(y && isYearLocked(y));
   }
+  /* Once per locked year per session: background writers (Ledger, payment backfill) would
+     otherwise repeat it on every scan and launch. */
+  const lockToasted = new Set();
   function lockGuard(rec) {
     const y = recordYear(rec);
     if (y && isYearLocked(y)) {
-      if (window.UI) UI.toast(`Tax year ${y} is locked. Unlock it in Settings to edit.`, "error", 5000);
+      if (typeof UI !== "undefined" && !lockToasted.has(y)) {
+        lockToasted.add(y);
+        UI.toast(`Tax year ${y} is locked — that change wasn't saved.`, "error", 5000);
+      }
       return true;
     }
     return false;
@@ -536,6 +543,27 @@ const Store = (() => {
       guarantees a fresh local edit is never overwritten by an older remote copy. */
   function markSettingsChanged() { state.settingsUpdatedAt = U.nowISO(); save(); }
 
+  /** True for settings nobody has filled in: every value still the factory default (the
+      theme, the last-backup date and the year-based values aside). A new install looks like
+      this, and sync never lets it replace a real profile (see Sync's merge). */
+  const FACTORY_IGNORED = ["theme", "lastBackupAt", "taxYear", "mileageRates"];
+  function isFactorySettings(s) {
+    if (!s) return true;
+    const d = defaultSettings();
+    return Object.keys(d).every(k => FACTORY_IGNORED.includes(k) ||
+      JSON.stringify(s[k] === undefined ? d[k] : s[k]) === JSON.stringify(d[k]));
+  }
+
+  /** Where trips are routed from: Settings → Home base when it's a street address, else the
+      business address. "" when neither is one — a label like "Home office" can't be routed
+      (geocoded, it once came out 1,334.8 miles from Alexandria and logged five 2,669.54-mile
+      round trips). */
+  function officeAddress() {
+    const s = state.settings || {};
+    const street = a => (/\d/.test(a || "") ? U.addressLine(a) : "");
+    return street(s.homeBase) || street(s.businessAddress);
+  }
+
   /* ---------- IndexedDB attachments (receipt images/PDFs) ---------- */
   const Attachments = (() => {
     const DB = "anstett_attachments", STORE = "files";
@@ -630,6 +658,11 @@ const Store = (() => {
     findDuplicates, setDuplicateIgnored, statusChangedAt, integrityCheck,
     exportJSON, importJSON, validateImport, resetAll, applySynced,
     isYearLocked, recordLocked, backupDue, markBackedUp, markSettingsChanged,
+    isFactorySettings, officeAddress,
+    /** A route longer than this each way is refused when logged automatically and needs your
+        OK when calculated in a form: the longest real drive so far is about 190 miles, and a
+        bad start address once produced 1,334.8. */
+    maxRouteMiles: 500,
     logAudit, labelFor,
     Attachments,
   };

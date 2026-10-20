@@ -462,11 +462,9 @@ SCHEMA.fields.mileage = [
   F("tripType", "Trip Type", "select", { options: SCHEMA.tripTypes, default: "Inspection" }),
   F("startLocation", "Start Location", "text", { placeholder: "office / home base address",
     hint: "Defaults to your office — set it under Settings → Home base (use a full street address so miles can auto-calculate)",
-    default: () => {
-      const s = Store.state.settings;
-      if (s.homeBase && /\d/.test(s.homeBase)) return s.homeBase; // looks like a real address
-      return (s.businessAddress || s.homeBase || "").replace(/\n/g, ", ");
-    } }),
+    // the office street address (Home base, else the business address), or blank — never the
+    // "Home office" label, which can't be routed
+    default: () => Store.officeAddress() }),
   F("destination", "Destination", "text", { required: false, placeholder: "loss location / client address" }),
   F("businessPurpose", "Business Purpose", "text", { placeholder: "e.g. Roof inspection for claim #…", span2: true }),
   F("clientId", "Client", "client"),
@@ -478,12 +476,20 @@ SCHEMA.fields.mileage = [
     actionBtn: {
       label: "📍 Calculate from addresses",
       async onClick({ values, btn, setValue, hint }) {
-        const from = String(values.startLocation || "").trim();
+        let from = String(values.startLocation || "").trim();
         const to = String(values.destination || "").trim();
+        // your Home base label ("Home office") stands for the office: route from its street address
+        const label = String(Store.state.settings.homeBase || "").trim().toLowerCase();
+        if (from && !/\d/.test(from) && (from.toLowerCase() === label || /^home( office)?$/i.test(from))) {
+          from = Store.officeAddress();
+          if (!from) { UI.toast("Set your office street address in Settings (Home base or Business address), or type the start address", "error", 6000); return; }
+        }
         if (!from || !to) { UI.toast("Fill in Start Location and Destination first", "error"); return; }
         btn.disabled = true; btn.textContent = "Calculating…";
         try {
           const oneWay = await U.drivingMiles(from, to);
+          if (oneWay > Store.maxRouteMiles && !(await UI.confirm("Check the addresses",
+            `That route comes out <strong>${U.num(oneWay, 1)} miles each way</strong>. Use it anyway?`, { confirmLabel: "Use it" }))) return;
           const total = U.round2(values.roundTrip ? oneWay * 2 : oneWay);
           setValue("miles", total);
           hint(`${U.num(oneWay, 1)} mi one-way${values.roundTrip ? " × 2 (round trip)" : ""} = ${U.num(total, 1)} mi — edit the number if you made extra stops`);

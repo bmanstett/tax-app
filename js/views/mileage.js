@@ -51,14 +51,15 @@ const Mileage = (() => {
     });
     const calcBtn = m.body.querySelector("#qt-calc");
     calcBtn.addEventListener("click", async () => {
-      const s = Store.state.settings;
-      const from = (s.homeBase && /\d/.test(s.homeBase)) ? s.homeBase : (s.businessAddress || s.homeBase || "").replace(/\n/g, ", ");
+      const from = Store.officeAddress();   // a street address, never the "Home office" label
       const to = m.body.querySelector("#qt-dest").value.trim();
-      if (!from) { UI.toast("Set your office address in Settings → Home base first", "error", 5000); return; }
+      if (!from) { UI.toast("Set your office street address in Settings (Home base or Business address) first", "error", 5000); return; }
       if (!to) { UI.toast("Enter the destination first", "error"); return; }
       calcBtn.disabled = true; calcBtn.textContent = "Calculating…";
       try {
         const oneWay = await U.drivingMiles(from, to);
+        if (oneWay > Store.maxRouteMiles && !(await UI.confirm("Check the addresses",
+          `That route comes out <strong>${U.num(oneWay, 1)} miles each way</strong>. Use it anyway?`, { confirmLabel: "Use it" }))) return;
         const round = m.body.querySelector("#qt-round").checked;
         const total = U.round2(round ? oneWay * 2 : oneWay);
         m.body.querySelector("#qt-miles").value = total;

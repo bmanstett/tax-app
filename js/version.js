@@ -7,6 +7,6 @@
 "use strict";
 
 const APP_BUILD = {
-  version: "2026.10.18-1",
-  notes: "Ledger now logs the expenses the Crew files in your CYxx Receipts folders, with the receipt attached.",
+  version: "2026.10.20-1",
+  notes: "Ledger can't log a receipt twice, a new device can't blank Settings, and no more 1,300-mile auto trips.",
 };

@@ -321,7 +321,8 @@ const UI = (() => {
           if (out.receiptStatus === "Missing" || out.receiptStatus === "Referenced") out.receiptStatus = "Attached";
         } catch (e) { toast("Couldn't store the file: " + e.message, "error", 5000); }
       }
-      opts.onSave && opts.onSave(out, m);
+      // an onSave that returns false couldn't save (it says why): the form stays open with what was typed
+      if (opts.onSave && opts.onSave(out, m) === false) return;
       m.close();
     });
 
