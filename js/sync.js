@@ -93,7 +93,7 @@ const Sync = (() => {
 
   /* ---------- merge ---------- */
   const COLLECTIONS = ["clients", "workOrders", "invoices", "income", "expenses", "mileage",
-    "receipts", "assets", "contractors", "taxPayments", "form1099s"];
+    "receipts", "assets", "contractors", "taxPayments", "form1099s", "officeBills"];
   const recTime = r => r.updatedAt || r.createdAt || "";
 
   /** Merge remote state into local: newest edit wins per record; tombstones delete. */

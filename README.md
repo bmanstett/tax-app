@@ -77,7 +77,7 @@ Clear it anytime: **Settings → Clear ALL data**, then start fresh.
 | **Mileage** | Field-optimized **⚡ Quick trip** logging, **automatic round trips on paid jobs you count as IRS mileage** (badged “Auto” — distance routed from your home base to the loss location), odometer support, per-year IRS rate, substantiation score, CSV log export |
 | **Receipts** | Attach photos/PDFs (stored locally in IndexedDB) or reference cloud/paper locations; missing-receipt report |
 | **Assets** | Equipment purchases flagged for depreciation / Section 179 CPA review |
-| **Home Office** | Square footage, simplified/actual-method inputs, CPA notes — organizer only |
+| **Home Office** | Square footage, simplified/actual-method inputs, CPA notes, and the house's **utility bills** (electric, gas, water, internet) with a month-by-month coverage grid and the office's share — organizer only; the bills never enter expenses |
 | **Contractors** | Payments, W-9 status, automatic $600 1099-NEC flagging (payments mirror into expenses) |
 | **Taxes** | Quarterly estimated payment tracker with due dates, configurable reserve percentages, year-end checklist, **year lock** |
 | **Reports** | 20+ printable reports incl. the **CPA Year-End Packet** and **IRS Audit-Readiness Packet** (Print → Save as PDF) |
@@ -171,6 +171,44 @@ The same scan logs expenses. The Crew saves the receipt into `Work Orders\CYxx\R
 - **Can't take it:** a file with a missing or unknown field, no `"schema"`, or a date in a
   locked tax year is reported once in the Ledger toast (and again whenever you tap
   **Settings → Ledger → Check now**), and left as it is until it's fixed.
+
+### Utility bills the Crew files
+
+The house's utility bills are the home office's operating cost, so they go in the **Home Office**
+section's utility-bill log, never in expenses: they're indirect costs that the office's share of the
+house applies to (Form 8829, the CPA's call), and logging them as expenses would count them twice and
+at 100%. The Crew saves each bill into `Work Orders\CYxx\Receipts\Home Office\` and writes a
+`<anything>.office.json` beside it; the same scan logs it:
+
+```json
+{
+  "schema": "ledger-office-bill/1",
+  "intakeKey": "dominion-bill-2026-10-02",
+  "accountId": "dominion", "kind": "bill", "cycle": "2026-10",
+  "receipt": "2026-10-02 Dominion Energy - electric bill.pdf",
+  "bill": {
+    "date": "2026-10-02", "utility": "Dominion Energy", "service": "Electric", "amount": 247.97,
+    "billMonth": "2026-10", "dueDate": "2026-10-27", "account": "ending 3351",
+    "property": "…", "paymentNote": "Paid Oct 2, 2026: …", "sourceRef": "…", "notes": "…"
+  }
+}
+```
+
+- **Fields:** `bill` uses the utility-bill form's field names. `date` (YYYY-MM-DD), `utility`,
+  `amount` and `service` (one of Electric, Natural Gas, Water & Sewer, Internet, Trash & Recycling,
+  Other) are required; `billMonth` (YYYY-MM, the month the bill is for — a bill logged from its
+  payment confirmation pays the month before), `dueDate`, `account`, `property`, `paymentNote`,
+  `sourceRef`, `receiptRef`, `receiptStatus`, `notes`, `auditNotes` and `cpaReview` are optional.
+  `accountId`, `kind` and `cycle` are the Crew's own bookkeeping and are ignored here.
+- **Bill copy, afterwards, can't take it:** exactly as for expenses — `receipt` is attached (the
+  bill waits until it's there), the file is stamped `"ledger": { "loggedAt", "billId" }`, a bill
+  with the same `intakeKey` is never added twice, and a file with a missing or unknown field is
+  reported in the Ledger toast and left alone.
+
+The Home Office page shows the year's bills by service, which months each utility's bills cover (a
+red dash is a month with no bill yet), and the office's share at the office-to-home square footage.
+Add a bill that didn't come through the Crew with **＋ Add Utility Bill**. The Home office summary
+report and the CPA packet list them.
 
 Your phone gets the records through normal sync. The inbox only runs on the computer that
 holds the folder.

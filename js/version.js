@@ -7,6 +7,6 @@
 "use strict";
 
 const APP_BUILD = {
-  version: "2026.10.20-1",
-  notes: "Ledger can't log a receipt twice, a new device can't blank Settings, and no more 1,300-mile auto trips.",
+  version: "2026.10.20-2",
+  notes: "Home Office now logs the house's utility bills, plus this morning's duplicate, Settings and mileage fixes.",
 };

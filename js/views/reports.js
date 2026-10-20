@@ -355,20 +355,54 @@ const Reports = (() => {
 
   function homeOfficeReport(year) {
     const ho = Store.state.homeOffice;
+    const sum = Store.officeBillSummary(year);
+    const bills = U.sortBy(sum.bills, b => b.date || "", 1);
+    const billCols = [
+      { label: "Bill date", value: b => U.fmtDate(b.date) },
+      { label: "Utility", value: b => b.utility || "" },
+      { label: "Service", value: b => b.service || "" },
+      { label: "For month", value: b => Store.billMonthOf(b) },
+      { label: "Account", value: b => b.account || "" },
+      { label: "Payment", value: b => b.paymentNote || "" },
+      { label: "Bill copy", value: b => b.attachmentId ? "Attached" : (b.receiptStatus || "Missing") },
+      { label: "Amount", value: b => U.money(b.amount), num: true },
+    ];
+    const csv = U.toCSV(bills, [
+      { label: "Bill Date", key: "date" }, { label: "Utility", key: "utility" }, { label: "Service", key: "service" },
+      { label: "For Month", value: b => Store.billMonthOf(b) }, { label: "Account", key: "account" },
+      { label: "Service Address", key: "property" }, { label: "Payment", key: "paymentNote" },
+      { label: "Bill Copy", value: b => b.attachmentId ? "Attached" : (b.receiptStatus || "Missing") },
+      { label: "Amount", value: b => Number(b.amount) || 0 },
+    ]);
     show(`Home Office Summary — ${year}`, head("Home Office Summary (for CPA review)", year) +
       UI.detailGrid([
         ["Regular & exclusive use", ho.usedRegularlyExclusively ? "Yes (per owner)" : "No / unconfirmed"],
+        ["Home office address", U.escapeHtml(ho.address || "—")],
         ["Office sq ft", String(ho.officeSqFt || "—")],
         ["Home sq ft", String(ho.homeSqFt || "—")],
-        ["Office % of home", ho.officeSqFt && ho.homeSqFt ? U.pct(ho.officeSqFt / ho.homeSqFt * 100, 1) : "—"],
+        ["Office % of home", sum.pct ? U.pct(sum.pct, 1) : "—"],
         ["Simplified est. ($5/sq ft ≤300)", ho.officeSqFt ? U.money(Math.min(ho.officeSqFt, 300) * 5) : "—"],
+        ["Utility bills logged", sum.count ? `${U.money(sum.total)} (${sum.count} bills)` : "—"],
+        ["Office share of the bills (est.)", sum.officeShare != null && sum.count ? `${U.money(sum.officeShare)} at ${U.pct(sum.pct, 1)}` : "—"],
         ["Utilities (mo)", U.money(ho.utilities)], ["Internet (mo)", U.money(ho.internet)],
         ["Insurance (mo)", U.money(ho.insurance)], ["Repairs (mo)", U.money(ho.repairs)],
         ["Mortgage/rent note", U.escapeHtml(ho.mortgageInterestRentNote || "—")],
         ["Property tax note", U.escapeHtml(ho.propertyTaxNote || "—")],
         ["CPA notes", U.escapeHtml(ho.cpaNotes || "—")],
       ]) +
-      `<div class="disclaimer" style="margin-top:14px">Home office deductions should be reviewed with a CPA. This summary organizes records only and does not determine final deductibility.</div>`);
+      H(`Utility bills — ${year}`) +
+      (sum.count
+        ? tbl([
+            { label: "Service", value: r => r.key },
+            { label: "Bills", value: r => String(r.count), num: true },
+            { label: "Total", value: r => U.money(r.total), num: true },
+            { label: "Office share (est.)", value: r => sum.pct ? U.money(U.round2(r.total * sum.pct / 100)) : "—", num: true },
+          ], sum.byService, { totalRow: ["TOTAL", String(sum.count), U.money(sum.total), sum.officeShare != null ? U.money(sum.officeShare) : "—"] }) +
+          `<p style="font-size:12px;color:var(--text-2);margin:6px 0 10px">The house's utility bills, at their full amounts. They are indirect home-office costs: the office's share (${sum.pct ? U.pct(sum.pct, 1) + " by square footage" : "square footage not entered"}) is an organizer estimate, and whether and how they're deducted (actual method, Form 8829) is the CPA's determination. A bill logged from its payment confirmation is for the month before; "For month" shows which.</p>` +
+          tbl(billCols, bills, { totalRow: ["TOTAL", "", "", "", "", "", "", U.money(sum.total)] })
+        : `<p style="font-size:12.5px">No utility bills logged for ${year}.</p>`) +
+      `<div class="disclaimer" style="margin-top:14px">Home office deductions should be reviewed with a CPA. This summary organizes records only and does not determine final deductibility.</div>`,
+      sum.count ? { name: `home-office-utility-bills-${year}.csv`, content: csv } : null);
   }
 
   /* ---------- CPA year-end packet ---------- */
@@ -394,6 +428,7 @@ const Reports = (() => {
     ];
     const missing = Alerts.attention(year).filter(a => ["exp-missing-receipt", "exp-missing-purpose", "exp-uncategorized", "mi-missing-purpose"].includes(a.id));
     const ho = S.homeOffice;
+    const bills8 = Store.officeBillSummary(year);
 
     show(`CPA Year-End Packet — ${year}`, head("CPA YEAR-END PACKET", year) +
       H("1. Business summary") +
@@ -444,6 +479,7 @@ const Reports = (() => {
       ], S.assets) +
       H("8. Home office") +
       `<p style="font-size:12.5px">${ho.usedRegularlyExclusively ? `Claimed regular & exclusive use. Office ${ho.officeSqFt} sq ft of ${ho.homeSqFt} sq ft home (${ho.officeSqFt && ho.homeSqFt ? U.pct(ho.officeSqFt / ho.homeSqFt * 100, 1) : "—"}). Simplified est. ${U.money(Math.min(ho.officeSqFt || 0, 300) * 5)}. Monthly actuals recorded: utilities ${U.money(ho.utilities)}, internet ${U.money(ho.internet)}, insurance ${U.money(ho.insurance)}, repairs ${U.money(ho.repairs)}. Notes: ${U.escapeHtml(ho.cpaNotes || "—")}` : "Not claimed / not configured."}</p>` +
+      (bills8.count ? `<p style="font-size:12.5px">Utility bills logged for the house${ho.address ? ` (${U.escapeHtml(ho.address)})` : ""}: <strong>${U.money(bills8.total)}</strong> in ${bills8.count} bills — ${bills8.byService.map(r => `${U.escapeHtml(r.key)} ${U.money(r.total)}`).join(" · ")}${bills8.officeShare != null ? `; office share at ${U.pct(bills8.pct, 1)} ≈ <strong>${U.money(bills8.officeShare)}</strong> (estimate)` : ""}. Not in the expense totals above. Bill-by-bill detail: Home office summary.</p>` : "") +
       H("9. Contractor payments") +
       tbl([
         { label: "Contractor", value: c => c.name }, { label: "W-9", value: c => c.w9Received ? "Yes" : "NO" },

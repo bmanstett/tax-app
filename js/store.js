@@ -56,8 +56,10 @@ const Store = (() => {
       assets: [],
       contractors: [],       // each has payments: []
       taxPayments: [],
+      officeBills: [],        // the house's utility bills — Home Office page, never expenses (see SCHEMA.utilityServices)
       homeOffice: {
         usedRegularlyExclusively: false,
+        address: "",
         officeSqFt: 0, homeSqFt: 0,
         utilities: 0, internet: 0, insurance: 0, repairs: 0,
         mortgageInterestRentNote: "", propertyTaxNote: "",
@@ -169,6 +171,7 @@ const Store = (() => {
       case "asset": return rec.name || "(asset)";
       case "contractor": return rec.name || "(contractor)";
       case "taxPayment": return `${rec.taxYear} ${rec.quarter} ${U.money(rec.amount)}`;
+      case "officeBill": return `${rec.utility || "?"} ${U.money(rec.amount)} ${U.fmtDate(rec.date)}`.trim();
       default: return rec.id;
     }
   }
@@ -291,6 +294,56 @@ const Store = (() => {
       taxPaymentsMade: paid, reserveRemaining: U.round2(totalReserve - paid),
       mileageMiles: U.sum(d.mileage, r => r.miles), mileageRate: mileageRate(y),
     };
+  }
+
+  /* ---------- home-office utility bills ----------
+     The house's bills are the office's operating cost. They stay out of the expense
+     totals above: the office's share of the house applies to them, and the method
+     (simplified or actual, Form 8829) is the CPA's call. */
+
+  /** The month a bill is for: its billMonth when it carries one (a bill logged from its
+      payment confirmation pays the month before), else its bill date's month. */
+  function billMonthOf(b) {
+    return /^\d{4}-\d{2}$/.test(String(b.billMonth || "")) ? b.billMonth : String(b.date || "").slice(0, 7);
+  }
+
+  /** The office's share of the house (office sq ft ÷ home sq ft, %), or 0 when either is missing. */
+  function officePct() {
+    const ho = state.homeOffice || {};
+    return ho.officeSqFt && ho.homeSqFt ? Math.min(Number(ho.officeSqFt) / Number(ho.homeSqFt) * 100, 100) : 0;
+  }
+
+  /** Utility bills logged for a tax year (by bill date): totals by service and by utility, which
+      months each utility's bills cover, and the office's share at the square-footage ratio
+      (an organizer estimate for the CPA, not a deduction). */
+  function officeBillSummary(y) {
+    y = Number(y);
+    const all = state.officeBills || [];
+    const bills = all.filter(b => inYear(b.date, y));
+    const total = U.round2(U.sum(bills, b => b.amount));
+    const group = (keyFn) => {
+      const out = {};
+      for (const b of bills) {
+        const k = keyFn(b);
+        out[k] = out[k] || { key: k, total: 0, count: 0 };
+        out[k].total = U.round2(out[k].total + (Number(b.amount) || 0));
+        out[k].count++;
+      }
+      return Object.values(out);
+    };
+    const byService = group(b => b.service || "Other")
+      .sort((a, b) => SCHEMA.utilityServices.indexOf(a.key) - SCHEMA.utilityServices.indexOf(b.key));
+    const byUtility = group(b => b.utility || "—").map(u => {
+      const sample = bills.find(b => (b.utility || "—") === u.key) || {};
+      // months of year y this utility's bills cover — from every year's bills, since a bill
+      // paid in January can be for December
+      const months = [...new Set(all.filter(b => (b.utility || "—") === u.key).map(billMonthOf)
+        .filter(m => m.startsWith(y + "-")))].sort();
+      return { ...u, service: sample.service || "", months };
+    }).sort((a, b) => b.total - a.total);
+    const pct = officePct();
+    return { year: y, bills, total, count: bills.length, byService, byUtility, pct,
+      officeShare: pct ? U.round2(total * pct / 100) : null };
   }
 
   /* ---------- state sourcing (which state's return the income belongs on) ----------
@@ -653,7 +706,7 @@ const Store = (() => {
     clientName, woLabel, invLabel,
     invoiceTotal, invoiceBalance, invoiceIsOverdue,
     mileageRate, tripDeduction, expenseDeductibleAmt,
-    yearData, taxSummary,
+    yearData, taxSummary, billMonthOf, officePct, officeBillSummary,
     incomeWorkOrder, incomeStateSource, incomeStateSplit, stateIncomeSummary,
     findDuplicates, setDuplicateIgnored, statusChangedAt, integrityCheck,
     exportJSON, importJSON, validateImport, resetAll, applySynced,
