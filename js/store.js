@@ -114,7 +114,8 @@ const Store = (() => {
       saveListeners.forEach(fn => fn(new Date()));
     } catch (e) {
       console.error("Save failed:", e);
-      if (window.UI) UI.toast("⚠️ Save failed — storage may be full. Export a backup now.", "error", 6000);
+      // UI is a top-level const, not a window property: `window.UI` was always false, so this never showed
+      if (typeof UI !== "undefined") UI.toast("⚠️ Save failed — storage may be full. Export a backup now.", "error", 6000);
     }
   }, 150);
 
@@ -135,7 +136,7 @@ const Store = (() => {
   function lockGuard(rec) {
     const y = recordYear(rec);
     if (y && isYearLocked(y)) {
-      if (window.UI) UI.toast(`Tax year ${y} is locked. Unlock it in Settings to edit.`, "error", 5000);
+      if (typeof UI !== "undefined") UI.toast(`Tax year ${y} is locked. Unlock it in Settings to edit.`, "error", 5000);
       return true;
     }
     return false;
@@ -652,6 +653,10 @@ const Store = (() => {
     exportJSON, importJSON, validateImport, resetAll, applySynced,
     isYearLocked, recordLocked, backupDue, markBackedUp, markSettingsChanged,
     isFactorySettings, officeAddress,
+    /** A route longer than this each way is refused when logged automatically and needs your
+        OK when calculated in a form: the longest real drive so far is about 190 miles, and a
+        bad start address once produced 1,334.8. */
+    maxRouteMiles: 500,
     logAudit, labelFor,
     Attachments,
   };

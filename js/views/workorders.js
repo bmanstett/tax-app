@@ -202,11 +202,6 @@ const WO = (() => {
       address), or "" — then nothing is routed (see Store.officeAddress). */
   const routeStart = () => Store.officeAddress();
 
-  /** An auto-logged drive longer than this each way is refused instead of logged: the
-      longest real one so far is about 190 miles, and a bad start address once produced
-      1,334.8. A longer trip you really drove can still be added by hand. */
-  const MAX_AUTO_ONE_WAY_MI = 500;
-
   /** The job's loss location as a single-line address (blank when there isn't one). */
   const lossAddress = w => U.addressLine(w && w.lossLocation);
 
@@ -217,6 +212,8 @@ const WO = (() => {
     const to = lossAddress(w);
     if (!to) throw new Error("This work order has no loss-location address to route to");
     const oneWay = await U.drivingMiles(from, to);
+    // a bad address lookup must not land on a client's invoice
+    if (oneWay > Store.maxRouteMiles) throw new Error(`the route came out ${U.num(oneWay, 1)} mi each way — check Settings → Home base and the job's address`);
     const miles = U.round2(oneWay * 2);
     const rate = mileageBillRate(w);
     return { oneWay: U.round2(oneWay), miles, rate, amount: U.round2(miles * rate) };
@@ -317,7 +314,8 @@ const WO = (() => {
       return { status: "skipped", reason: notMileageReason(now) };
 
     const oneWay = U.round2(route.miles);
-    if (oneWay > MAX_AUTO_ONE_WAY_MI)
+    // never logged on its own: a longer trip you really drove can still be added by hand
+    if (oneWay > Store.maxRouteMiles)
       return { status: "failed", reason: `the route came out ${U.num(oneWay, 1)} mi each way from ${U.truncate(from, 40)} — check Settings → Home base and the job's address` };
     const miles = U.round2(oneWay * 2);
     const billed = !!w.mileageAllowed;   // the client agreed to cover it, and the job is paid
@@ -1023,7 +1021,8 @@ const WO = (() => {
         case "mileage":
           // dated to the inspection (the day of the drive), not to today
           UI.openForm("mileage", null, { presets: { ...presets, ...(w.inspectionDate ? { date: w.inspectionDate } : {}), businessPurpose: `Inspection — ${w.jobType || "site"} (${w.woNumber || ""})`.trim(), destination: (w.lossLocation || "").split("\n")[0], reimbursable: !!w.mileageAllowed },
-            onSave: v => { Store.add("mileage", v); UI.toast("Mileage logged", "success"); m.close(); openDetail(w); } });
+            // a refused save (a locked tax year) keeps the form open; Store.add has said why
+            onSave: v => { if (!Store.add("mileage", v)) return false; UI.toast("Mileage logged", "success"); m.close(); openDetail(w); } });
           break;
         case "expense":
           UI.openForm("expense", null, { presets: { ...presets, businessPurpose: `Job expense — ${w.woNumber || ""}`.trim() },

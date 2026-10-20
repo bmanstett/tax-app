@@ -58,6 +58,8 @@ const Mileage = (() => {
       calcBtn.disabled = true; calcBtn.textContent = "Calculating…";
       try {
         const oneWay = await U.drivingMiles(from, to);
+        if (oneWay > Store.maxRouteMiles && !(await UI.confirm("Check the addresses",
+          `That route comes out <strong>${U.num(oneWay, 1)} miles each way</strong>. Use it anyway?`, { confirmLabel: "Use it" }))) return;
         const round = m.body.querySelector("#qt-round").checked;
         const total = U.round2(round ? oneWay * 2 : oneWay);
         m.body.querySelector("#qt-miles").value = total;

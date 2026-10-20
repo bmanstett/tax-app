@@ -53,7 +53,8 @@ as an off-device backup with full history (every sync is a git commit).
   wins; deletions on one device propagate to the others (tombstones). Nothing is ever
   overwritten wholesale.
 - **Settings:** the device that saved Settings last wins. A new install's blank profile never
-  does — a device turning sync on for the first time takes the synced profile.
+  does: a device turning sync on for the first time takes the synced profile, keeping only the
+  changes made on it since (say, one tax assumption) when they're newer.
 - **Safety rails:** sync refuses to write to a public repo, and the token is stored only on
   the device (never in JSON backups or the synced data).
 
@@ -250,7 +251,8 @@ Routing details:
   your **Business address**. With neither, nothing is auto-logged — a label like "Home office"
   can't be routed (it once geocoded to a spot 1,334.8 miles away). An auto-logged route over 500
   miles each way is refused rather than logged; check the addresses (Settings → Data health
-  lists the jobs), or add a trip that long by hand if you really drove it.
+  lists the jobs), or add a trip that long by hand if you really drove it. **📍 Calculate** in a
+  trip form or on an invoice asks before using a route that long.
 - **🚗 Add mileage** on a job dates the trip to its inspection; the form still lets you change it.
 - Distances come from free OpenStreetMap services (Nominatim + OSRM, no API key, one lookup a
   second). When a street number isn't on the map it falls back to the street, then the town, and
