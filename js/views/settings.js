@@ -530,7 +530,7 @@ Views.settings = {
       const ok = await UI.confirm("Erase everything?",
         "This permanently deletes <strong>all</strong> clients, work orders, invoices, income, expenses, mileage, receipts, assets, contractors, tax data, settings, and the audit log from this browser. Export a backup first!",
         { danger: true, confirmLabel: "Erase all data", requireText: "DELETE" });
-      if (ok) { Store.resetAll(); UI.clearListState(); WO.reseedArrivals(); UI.toast("All data cleared"); App.go("dashboard"); }
+      if (ok) { Store.resetAll(); Sync.forgetLastSync(); UI.clearListState(); WO.reseedArrivals(); UI.toast("All data cleared"); App.go("dashboard"); }
     });
   },
 };

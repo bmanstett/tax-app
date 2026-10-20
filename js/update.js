@@ -92,7 +92,7 @@ const AppUpdate = (() => {
 
     Store.save();   // flush anything typed in the last moment before we reload
     // push this device's records first, so nothing waits on the old code
-    if (window.Sync && Sync.config.enabled) {
+    if (typeof Sync !== "undefined" && Sync.config.enabled) {   // a top-level const: never on window
       await Promise.race([
         Sync.now().catch(() => {}),
         new Promise(r => setTimeout(r, 6000)),   // a slow sync must not block the update

@@ -60,7 +60,7 @@ const Inbox = (() => {
   ];
 
   let root = null;          // FileSystemDirectoryHandle for "Work Orders"
-  let busy = false;
+  let running = null;       // the scan in progress (a Promise), so a second one never starts beside it
   let lastScanAt = 0;
   let last = null;          // { at, imported: [...], needsPermission, error }
   let loud = false;         // "Check now": report every expense-file problem, not just new ones
@@ -415,6 +415,14 @@ const Inbox = (() => {
     vals.intakeKey = key;
     vals.intakeFile = `Work Orders/${where}`;
 
+    // Reading the receipt takes a moment: look again right before adding, so an expense another
+    // pass logged meanwhile isn't added a second time.
+    const already = Store.all("expense").find(e => e.intakeKey === key);
+    if (already) {
+      if (vals.attachmentId) await Store.Attachments.delete(vals.attachmentId).catch(() => {});
+      await stampExpense(dir, name, data, now, already.id);
+      return null;
+    }
     const rec = Store.add("expense", vals);
     if (!rec) {
       if (vals.attachmentId) await Store.Attachments.delete(vals.attachmentId).catch(() => {});
@@ -481,6 +489,13 @@ const Inbox = (() => {
     vals.intakeKey = key;
     vals.intakeFile = `Work Orders/${where}`;
 
+    // Reading the bill copy takes a moment: look again right before adding (as for expenses).
+    const already = Store.all("officeBill").find(b => b.intakeKey === key);
+    if (already) {
+      if (vals.attachmentId) await Store.Attachments.delete(vals.attachmentId).catch(() => {});
+      await stampFile(dir, name, data, now, { billId: already.id });
+      return null;
+    }
     const rec = Store.add("officeBill", vals);
     if (!rec) {
       if (vals.attachmentId) await Store.Attachments.delete(vals.attachmentId).catch(() => {});
@@ -540,9 +555,31 @@ const Inbox = (() => {
     return out;
   }
 
-  /* ---------- scan ---------- */
-  async function scan({ interactive = false } = {}) {
-    if (!supported() || busy) return last;
+  /* ---------- scan ----------
+     One scan at a time. The window's focus and visibility events fire together, and the
+     startup check can land on top of them: two scans side by side each found the same
+     unstamped expense file before either had stamped it, and logged it twice (2026-10-20,
+     two Turo expenses). So a scan asked for while one runs gets that one's result (a "Check
+     now" runs right after it), and across windows of the app the browser's Web Locks let only
+     one window scan the folders at a time — a window that finds the lock taken skips that
+     round, and the stamps tell its next scan what's done. */
+  function scan(opts = {}) {
+    if (!supported()) return Promise.resolve(last);
+    if (running) return opts.interactive ? running.catch(() => {}).then(() => scan(opts)) : running;
+    lastScanAt = Date.now();
+    running = withScanLock(!!opts.interactive, () => scanOnce(opts)).finally(() => { running = null; });
+    return running;
+  }
+
+  /** Runs fn holding the "Ledger scan" lock shared by every window of the app. A background
+      scan skips when another window holds it; "Check now" waits its turn. */
+  function withScanLock(wait, fn) {
+    if (!(navigator.locks && navigator.locks.request)) return fn();
+    return navigator.locks.request("anstett-ledger-scan", wait ? {} : { ifAvailable: true },
+      lock => (lock ? fn() : last));
+  }
+
+  async function scanOnce({ interactive = false } = {}) {
     if (!root) root = await loadRoot();
     if (!root) return last;
     let perm = await root.queryPermission({ mode: "readwrite" });
@@ -551,9 +588,7 @@ const Inbox = (() => {
       last = { at: U.nowISO(), imported: [], needsPermission: true };
       return last;
     }
-    busy = true;
     loud = interactive;
-    lastScanAt = Date.now();
     const imported = [];
     try {
       const jobs = [], places = new Map();   // P# → the job folders that carry it
@@ -605,8 +640,6 @@ const Inbox = (() => {
       console.warn("Inbox scan failed:", e);
       last = { at: U.nowISO(), imported, error: e.message || String(e) };
       if (interactive) UI.toast("Inbox check failed: " + last.error, "error", 6000);
-    } finally {
-      busy = false;
     }
     return last;
   }

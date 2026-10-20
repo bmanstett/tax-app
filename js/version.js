@@ -7,6 +7,6 @@
 "use strict";
 
 const APP_BUILD = {
-  version: "2026.10.20-1",
-  notes: "Home Office now keeps the house's utility bills — electric, gas, water, internet — and Ledger logs the ones the Crew files in Receipts\\Home Office.",
+  version: "2026.10.20-2",
+  notes: "Home Office now logs the house's utility bills, plus this morning's duplicate, Settings and mileage fixes.",
 };
