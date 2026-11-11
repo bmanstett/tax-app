@@ -76,7 +76,8 @@ Views.dashboard = {
     const LINKS = {};
     const link = (key, lists) => { if (!lists) return ""; LINKS[key] = lists; return key; };
     // unbilled reimbursables live in two lists — open the one that actually has some
-    const reimbInMileageOnly = !d.expenses.some(e => e.reimbursable && !e.reimbursed) && d.mileage.some(m => m.reimbursable && !m.reimbursed);
+    const reimbExp = d.expenses.filter(e => e.reimbursable && !e.reimbursed).length, reimbMi = d.mileage.filter(m => m.reimbursable && !m.reimbursed).length;
+    const reimbInMileageOnly = !reimbExp && reimbMi > 0;
 
     el.innerHTML = `
       ${UI.pageHeader("Dashboard", `${S.settings.businessName} — tax year <strong>${year}</strong>. Figures are organizer estimates, not tax advice.`, App.yearPickerHtml())}
@@ -86,7 +87,10 @@ Views.dashboard = {
         ${UI.statCard({ label: "YTD Expenses (deductible est.)", value: U.money(t.deductibleExpenses), sub: `+ ${U.money(t.mileageDeduction)} est. mileage`, color: "red", icon: "💳", onClickRoute: "expenses", link: link("expenses", { "exp-list": { filters: { yr } } }) })}
         ${UI.statCard({ label: "Estimated Net Profit", value: U.money(t.netProfit), sub: "before CPA adjustments", color: "accent", icon: "📈" })}
         ${(() => {
-          const ts = TaxIdeas.summary(year);
+          // (guarded: a launch that mixed this file with an older page must still draw the dashboard)
+          let ts = null;
+          try { if (typeof TaxIdeas !== "undefined") ts = TaxIdeas.summary(year); } catch (e) { console.warn("Tax-savings tile skipped:", e); }
+          if (!ts) return "";
           return UI.statCard({ label: "Tax-Saving Ideas", value: ts.potential > 0 ? "≈ " + U.money(ts.potential, { cents: false }) : `${ts.open} open`,
             sub: ts.potential > 0 ? `est. tax you could still save · ${ts.open} idea${ts.open === 1 ? "" : "s"} open` : "legal ways to lower taxable income",
             color: "green", icon: "💡", onClickRoute: "taxsavings" });
@@ -96,7 +100,7 @@ Views.dashboard = {
         ${UI.statCard({ label: "Outstanding Invoices", value: U.money(U.sum(outstanding, Store.invoiceBalance)), sub: `${outstanding.length} open · ${overdue.length} overdue`, color: overdue.length ? "red" : "blue", icon: "🧾", onClickRoute: "invoices", link: link("outstanding", { "inv-list": { filters: { status: "open" } } }) })}
         ${UI.statCard({ label: "Work Orders", value: `${openWOs.length} open`, sub: `${unbilledWOs.length} unbilled · ${closedWOs.length} closed`, color: "teal", icon: "📋", onClickRoute: "workorders", link: link("openwos", { "wo-list": { filters: { status: SCHEMA.woOpenStatuses } } }) })}
         ${UI.statCard({ label: "Business Miles (YTD)", value: U.num(t.mileageMiles, 0), sub: `≈ ${U.money(t.mileageDeduction)} deduction @ ${t.mileageRateText}`, color: "amber", icon: "🚗", onClickRoute: "mileage", link: link("miles", { "mi-list": { filters: { yr } } }) })}
-        ${UI.statCard({ label: "Unbilled Reimbursables", value: U.money(reimbUnbilled), sub: "expenses + mileage not yet invoiced", color: "amber", icon: "↩️", onClickRoute: reimbInMileageOnly ? "mileage" : "expenses",
+        ${UI.statCard({ label: "Unbilled Reimbursables", value: U.money(reimbUnbilled), sub: reimbExp && reimbMi ? `${reimbExp} expense${reimbExp === 1 ? "" : "s"} (opens these) + ${reimbMi} trip${reimbMi === 1 ? "" : "s"} on Mileage` : "expenses + mileage not yet invoiced", color: "amber", icon: "↩️", onClickRoute: reimbInMileageOnly ? "mileage" : "expenses",
           link: link("reimb", reimbInMileageOnly ? { "mi-list": { filters: { yr, flag: "reimb" } } } : { "exp-list": { filters: { yr, flag: "reimb" } } }) })}
         ${UI.statCard({ label: "Missing Receipts", value: String(missingReceipts), sub: missingReceipts ? "fix before year-end" : "all clear 🎉", color: missingReceipts ? "red" : "green", icon: "📎", onClickRoute: "expenses", link: link("noreceipt", { "exp-list": { filters: { yr, flag: "noreceipt" } } }) })}
         ${UI.statCard({ label: "Paid Invoices (YTD)", value: String(paidInv.length), sub: U.money(U.sum(paidInv, i => Number(i.amountPaid) || 0)), color: "green", icon: "✅", onClickRoute: "invoices", link: link("paidinv", { "inv-list": { filters: { status: "Paid", yr } } }) })}
@@ -156,7 +160,7 @@ Views.dashboard = {
             <div class="card-title">🚨 What needs attention</div>
             <div class="card-sub">Most important first — tap to jump there</div>
             ${attention.length ? attention.slice(0, 9).map(a => `
-              <div class="attention-item sev-${a.severity}" ${a.action ? `data-action="${a.action}"` : `data-route="${a.route}" data-link="${link("att-" + a.id, a.list)}"`}>
+              <div class="attention-item sev-${a.severity}" role="${a.action ? "button" : "link"}" tabindex="0" ${a.action ? `data-action="${a.action}"` : `data-route="${a.route}" data-link="${link("att-" + a.id, a.list)}"`}>
                 <div class="attention-icon">${a.icon}</div>
                 <div class="attention-text">
                   <div class="attention-title">${U.escapeHtml(a.title)}</div>
@@ -177,7 +181,7 @@ Views.dashboard = {
             </div>
             <div style="margin-top:10px">
               ${[...cpa.detail, ...audit.detail].filter((x, i, arr) => arr.findIndex(y => y.id === x.id) === i).slice(0, 6).map(x => `
-                <div class="score-line" ${x.action ? `data-action="${x.action}"` : `data-route="${x.route}" data-link="${link("att-" + x.id, x.list)}"`} style="cursor:pointer">
+                <div class="score-line" role="${x.action ? "button" : "link"}" tabindex="0" ${x.action ? `data-action="${x.action}"` : `data-route="${x.route}" data-link="${link("att-" + x.id, x.list)}"`} style="cursor:pointer">
                   <span>${U.escapeHtml(U.truncate(x.title, 46))}</span><span class="${x.severity === "bad" ? "bad" : "warn"}">−${x.penalty}</span>
                 </div>`).join("") || `<div class="score-line"><span>No deductions — well documented</span><span class="ok">✓</span></div>`}
             </div>
@@ -225,7 +229,11 @@ Views.dashboard = {
       });
     });
     // some attention items open a review screen instead of just jumping to a page
-    el.querySelectorAll("[data-action]").forEach(x => x.addEventListener("click", () => DataHealth.run(x.getAttribute("data-action"))));
+    el.querySelectorAll("[data-action]").forEach(x => {
+      const run = () => DataHealth.run(x.getAttribute("data-action"));
+      x.addEventListener("click", run);
+      if (x.tagName !== "BUTTON") x.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); run(); } });
+    });
     Charts.bindTooltips(el);
   },
 };

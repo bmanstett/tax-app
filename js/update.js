@@ -19,6 +19,7 @@ const AppUpdate = (() => {
 
   let latest = null;      // the build stamp found on the server
   let checking = false;
+  let applying = false;   // "Sync & refresh" is running: the page is about to reload
   let timer = null;
 
   // top-level `const` lives in the script scope, not on window — check it by name
@@ -87,7 +88,10 @@ const AppUpdate = (() => {
 
   /** Sync what's on this device, force the new code past every cache, reload. */
   async function applyUpdate() {
+    if (applying) return;
+    applying = true;
     const btn = document.getElementById("ub-refresh");
+    const btnLabel = btn ? btn.textContent : "";
     if (btn) { btn.disabled = true; btn.textContent = "Updating…"; }
 
     Store.save();   // flush anything typed in the last moment before we reload
@@ -108,7 +112,16 @@ const AppUpdate = (() => {
     // code instead of whatever the HTTP cache is still holding
     const urls = [location.pathname,
       ...[...document.querySelectorAll('script[src], link[rel="stylesheet"]')].map(el => el.src || el.href)];
-    await Promise.all(urls.map(u => fetch(u, { cache: "reload" }).catch(() => {})));
+    // (a file the new version no longer has answers 404 — that is not a failed download)
+    const got = await Promise.all(urls.map(u => fetch(u, { cache: "reload" }).then(r => r.ok || r.status === 404, () => false)));
+    if (!got.every(Boolean)) {
+      // Part of the update didn't arrive (a weak signal). Reloading now would run new files
+      // beside old ones — stay on the version that works and let them try again.
+      applying = false;
+      if (btn) { btn.disabled = false; btn.textContent = btnLabel; }
+      UI.toast("Couldn't download the whole update — the connection dropped. Nothing changed; try again in a moment.", "error", 7000);
+      return;
+    }
 
     if (latest) ss.set(APPLIED_KEY, latest.version);
     ss.del(DISMISS_KEY);
@@ -146,5 +159,6 @@ const AppUpdate = (() => {
     if (navigator.serviceWorker) navigator.serviceWorker.addEventListener("controllerchange", () => check());
   }
 
-  return { init, check, applyUpdate, later, get version() { return runningVersion(); }, get latest() { return latest; } };
+  return { init, check, applyUpdate, later, get version() { return runningVersion(); }, get latest() { return latest; },
+    get applying() { return applying; } };
 })();

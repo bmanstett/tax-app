@@ -710,6 +710,9 @@ const WO = (() => {
   /** Work orders that arrived since the last look (Ledger, a sync, an import) get the
       travel question queued. → the new records. */
   function noticeArrivals() {
+    // "Sync & refresh" is about to reload the page: leave arrivals unseen — the question would
+    // be closed by the reload, and a job is asked about once. The launch that follows asks.
+    if (typeof AppUpdate !== "undefined" && AppUpdate.applying) return [];
     if (!seenExists()) { reseedArrivals(); return []; }
     const seen = seenIds();
     const fresh = Store.all("workOrder").filter(w => !seen.has(w.id));

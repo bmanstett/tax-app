@@ -412,8 +412,10 @@ Views.invoices = {
       filters: [
         { id: "status", label: "Status",
           options: [{ value: "open", label: "Outstanding (open balance)" }, { value: "awaiting", label: "Awaiting payment (not overdue)" },
+            { value: "pastdue", label: "Past due (balance owed)" },
             ...SCHEMA.invoiceStatuses.map(s => s.value)],
           apply: (i, v) => v === "open" ? Invoices.isOutstanding(i)
+            : v === "pastdue" ? Store.invoiceIsOverdue(i)
             : v === "awaiting" ? ["Sent", "Partial"].includes(i.status) && Store.invoiceBalance(i) > 0.005 && !Store.invoiceIsOverdue(i)
             : v === "Overdue" ? Store.invoiceIsOverdue(i) || i.status === "Overdue"
             : i.status === v },

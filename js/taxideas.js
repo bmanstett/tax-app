@@ -94,6 +94,11 @@ const TaxIdeas = (() => {
     const s = Store.state.settings;
     const tp = s.taxPlan = { profile: {}, years: {}, ideas: {}, ...(s.taxPlan || {}) };
     fn(tp);
+    // The plan has its own stamp, and sync keeps the plan edited last whichever settings
+    // profile wins (Sync.mergeStates). The profile stamp moves with it too, so a device on an
+    // earlier build takes the change. (A new install can't claim the profile this way: sync
+    // never lets a factory profile replace a real one — Store.isFactorySettings.)
+    tp.updatedAt = U.nowISO();
     Store.markSettingsChanged();
   }
   function saveProfile(patch) { mutatePlan(tp => { tp.profile = { ...(tp.profile || {}), ...patch }; }); }
@@ -146,9 +151,13 @@ const TaxIdeas = (() => {
 
     // rates: what a dollar of deduction is worth
     const fed = Math.min(Math.max(num(p.fedMarginalPct) ?? 22, 0), 50) / 100;
-    const st = Math.min(Math.max(num(p.stateMarginalPct) ?? 0, 0), 15) / 100;
+    // (blank = the default the field shows; type 0 for a state with no income tax)
+    const st = Math.min(Math.max(num(p.stateMarginalPct) ?? PROFILE_DEFAULTS.stateMarginalPct, 0), 15) / 100;
     const se = seTaxOn(projNet, L, s.seTaxRatePct);
-    const seMarginal = 0.9235 * (se.aboveWageBase ? 0.029 : (Number(s.seTaxRatePct) > 0 ? Number(s.seTaxRatePct) / 100 : 0.153));
+    // (no profit, no self-employment tax to save: a deduction is then worth income tax only —
+    // once "no profit" is a result, not just the empty books of a year's first months)
+    const noProfit = projNet <= 0 && !(current && elapsed < 0.5);
+    const seMarginal = noProfit ? 0 : 0.9235 * (se.aboveWageBase ? 0.029 : (Number(s.seTaxRatePct) > 0 ? Number(s.seTaxRatePct) / 100 : 0.153));
     // a business deduction also shrinks the 20% QBI deduction, so the federal bite is ~80% of the
     // bracket (an approximation: exact only while the QBI deduction is fully available)
     const fedBiz = fed * 0.8;
@@ -403,9 +412,10 @@ const TaxIdeas = (() => {
   idea(c => {
     if (c.projNet < 100000) return null;
     const typed = num(c.yf.scorpSalary);
-    const salary = typed && typed > 0 ? typed : Math.min(Math.max(Math.round(c.projNet * 0.5 / 5000) * 5000, 80000), 120000);
+    const asked = typed && typed > 0 ? typed : Math.min(Math.max(Math.round(c.projNet * 0.5 / 5000) * 5000, 80000), 120000);
+    const salary = Math.min(asked, c.projNet);   // a salary can't exceed the profit that pays it — and the text quotes the figure used
     const K = 2750;
-    const gain = scorpGain(c, Math.min(salary, c.projNet), K);
+    const gain = scorpGain(c, salary, K);
     return {
       id: "scorp", icon: "🏢", tier: "assertive", group: "Rates & structure",
       title: "Elect S-corporation status and pay yourself a reasonable salary",
@@ -509,8 +519,15 @@ const TaxIdeas = (() => {
     const claimed = !!ho.usedRegularlyExclusively && sq > 0;
     const simplified = Math.min(sq, c.L.homeOfficeMaxSqFt) * c.L.homeOfficeRate;
     const pct = sq && home ? sq / home : 0;
-    const monthly = (Number(ho.utilities) || 0) + (Number(ho.internet) || 0) + (Number(ho.insurance) || 0) + (Number(ho.repairs) || 0);
-    const actualKnown = pct * monthly * 12;
+    // Utilities are counted once: the house's bills logged on the Home Office page (by hand or
+    // by Ledger) once they outgrow the monthly utilities + internet estimate, the estimate
+    // until then (a year with two bills logged so far isn't a two-bill year).
+    const bills = Store.officeBillSummary(c.year);
+    const billShare = bills.count ? pct * bills.total : 0;
+    const utilEst = pct * ((Number(ho.utilities) || 0) + (Number(ho.internet) || 0)) * 12;
+    const fromBills = billShare > 0 && billShare >= utilEst;
+    const monthlyOther = (Number(ho.insurance) || 0) + (Number(ho.repairs) || 0);
+    const actualKnown = pct * monthlyOther * 12 + Math.max(billShare, utilEst);
     const best = Math.max(simplified, actualKnown);
     return {
       id: "homeoffice", icon: "🏠", tier: "assertive", group: "Home office, vehicle & travel",
@@ -518,7 +535,7 @@ const TaxIdeas = (() => {
       summary: "You run the practice and write every report from home, and you have no other fixed office: that makes the home office your principal place of business even though the inspections happen elsewhere. It's a Schedule C deduction (so it cuts self-employment tax too), and it is not the audit flag it's rumoured to be.",
       why: claimed
         ? `Recorded: ${U.num(sq)} sq ft${home ? ` of ${U.num(home)} (${U.pct(pct * 100, 1)})` : ""}. Simplified method = ${$(simplified)}. ` +
-          (actualKnown ? `Regular method on the costs entered so far ≈ ${$(actualKnown)} a year — before your share of mortgage interest or rent, property tax and depreciation, which usually make it the bigger number.` : "Enter your monthly utilities, insurance and repairs on the Home Office page to compare the regular method.")
+          (actualKnown ? `Regular method on the costs entered so far ≈ ${$(actualKnown)}${fromBills ? ` (the office's share of the ${bills.count} utility bill${bills.count === 1 ? "" : "s"} logged for ${c.year}, ${$(bills.total)}, is ${$(billShare)} of that)` : bills.count ? ` a year (utilities from your monthly figures; the ${bills.count} bill${bills.count === 1 ? "" : "s"} logged for ${c.year} so far come${bills.count === 1 ? "s" : ""} to ${$(bills.total)})` : " a year"} — before your share of mortgage interest or rent, property tax and depreciation, which usually make it the bigger number.` : "Log the house's utility bills, and enter monthly insurance and repairs, on the Home Office page to compare the regular method.")
         : "The Home Office page doesn't show a space used regularly and exclusively for the business yet. A 150 sq ft office is worth $750 a year on the simplified method alone, and typically more on the regular method.",
       est: best > 0 ? { amount: best, savings: best * c.rate.schedC, kind: claimed ? "check" : "saves",
         note: claimed ? "Already in hand — make sure the better of the two methods is the one on the return." : "Based on what's entered on the Home Office page." } : null,
@@ -529,7 +546,7 @@ const TaxIdeas = (() => {
         "Choose the better method each year, on the original return.",
         "Take a few dated photos of the office each year and keep them with the return.",
       ],
-      proof: ["Floor measurements or a sketch showing office and total square footage.", "Dated photos showing the room set up as an office and nothing else.", "Utility, insurance, mortgage-interest or rent, and property-tax records (regular method).", "A note that you have no other fixed place where you do the practice's administrative work."],
+      proof: ["Floor measurements or a sketch showing office and total square footage.", "Dated photos showing the room set up as an office and nothing else.", "Utility bills (the Home Office page keeps each one with its copy attached), insurance, mortgage-interest or rent, and property-tax records (regular method).", "A note that you have no other fixed place where you do the practice's administrative work."],
       line: "“Exclusively” means exclusively: more than incidental personal use — a guest bed, the family computer, a treadmill — fails the test. The regular method's depreciation is taxed back (at up to 25%) when the house is sold. The deduction can't exceed the practice's income; the excess carries forward. Internet goes in once: on Schedule C at its business-use %, or in the home-office utilities, not both.",
       authority: ["IRC §280A(c)(1) (including the administrative/management test), §280A(c)(5)", "Rev. Proc. 2013-13 (simplified method)", "Form 8829; IRS Publication 587"],
       deadline: dl("On the return — but the space must have qualified during the year", ""),
@@ -565,7 +582,7 @@ const TaxIdeas = (() => {
       proof: ["A log kept at or near the time of each trip (a weekly log counts): date, destination, miles, business purpose.", "Odometer readings at the start and end of the year.", "The work order or calendar entry that ties each trip to a job.", "The home-office record — it's what makes in-town trips from home business travel."],
       line: "Estimates and round numbers are not allowed for vehicle expenses, and a log rebuilt after the fact carries far less weight than one kept at the time — invented entries are fraud. Don't log personal stops or detours, and don't claim the per-mile rate plus the same vehicle's gas or repairs. If the home office didn't qualify, trips from home to sites inside your home metropolitan area would be commuting (out-of-area temporary sites stay deductible either way).",
       authority: ["IRC §162(a), §274(d); Temp. Treas. Reg. §1.274-5T(b)(6), (c)", "Rev. Rul. 99-7 (trips from a home that is the principal place of business)", "Rev. Proc. 2019-46; IRS Publication 463"],
-      deadline: yearEndDeadline(c),
+      deadline: c.past ? dl(`Before the ${c.year} return is filed — only trips you can document`, "") : yearEndDeadline(c),
       cta: noTrip.length
         ? { label: "Show jobs missing mileage", route: "workorders", lists: { "wo-list": { filters: { yr: String(c.year), flag: "notrip" } } } }
         : { label: "Open the mileage log", route: "mileage", lists: { "mi-list": { filters: { yr: String(c.year) } } } },
@@ -627,10 +644,14 @@ const TaxIdeas = (() => {
     const smallAssets = c.d.assets.filter(a => (Number(a.cost) || 0) > 0 && (Number(a.cost) || 0) <= c.L.deMinimis);
     const big = c.d.assets.filter(a => (Number(a.cost) || 0) > c.L.deMinimis);
     const share = a => (Number(a.cost) || 0) * (Number(a.businessUsePct ?? 100) / 100);
-    const total = U.sum(small, e => e.amount) + U.sum(smallAssets.filter(a => !a.expenseId), share);
+    // an asset logged from one of those expenses is the same purchase: counted once; an asset
+    // whose expense isn't in the list (another category, another year) still counts
+    const smallIds = new Set(small.map(e => e.id));
+    const ownAssets = smallAssets.filter(a => !(a.expenseId && smallIds.has(a.expenseId)));
+    const total = U.sum(small, e => e.amount) + U.sum(ownAssets, share);
     const bigTotal = U.sum(big, share);
     if (!small.length && !smallAssets.length && !big.length) return null;
-    const n = small.length + smallAssets.length;
+    const n = small.length + ownAssets.length;
     return {
       id: "expensing", icon: "🛠️", tier: "standard", group: "Equipment & timing",
       title: "Write off this year's equipment in full, this year",
@@ -927,7 +948,9 @@ const TaxIdeas = (() => {
       if (!it) continue;
       it.status = ideaStatus(c.year, it.id);
       if (it.est) { it.est.savings = Math.max(U.round2(it.est.savings || 0), 0); if (it.est.amount != null) it.est.amount = U.round2(it.est.amount); }
-      if (it.deadline && it.deadline.date && c.current) it.deadline.daysLeft = U.daysBetween(c.today, it.deadline.date);
+      // (a past year too: most of its deadlines have gone by, a few — plan contributions, the
+      // HSA — run to the filing date)
+      if (it.deadline && it.deadline.date && c.year <= c.thisYear) it.deadline.daysLeft = U.daysBetween(c.today, it.deadline.date);
       out.push(it);
     }
     // an alternative steps aside once the idea it stands in for is under way
@@ -942,15 +965,25 @@ const TaxIdeas = (() => {
     return Store.cachedTurn("taxideas:" + Number(year), () => {
       const { ideas, ctx } = ideasFor(year);
       const live = ideas.filter(i => i.status !== "skip");
-      const shown = new Set(live.map(i => i.id));
-      const counts = i => i.est && !(i.altOf && shown.has(i.altOf));
+      // "could still save" leaves out what can no longer be done: the deadline has passed
+      const lapsed = i => i.status !== "done" && !!(i.deadline && i.deadline.daysLeft != null && i.deadline.daysLeft < 0);
+      const shown = new Set(live.filter(i => !lapsed(i)).map(i => i.id));   // (a lapsed idea no longer hides its alternative: the SEP after the 401(k) window)
+      // An idea and its alternative (solo 401(k) / SEP) are one saving, counted once: the
+      // alternative only when it is the one done (or the idea itself isn't shown), and then
+      // the idea it replaced no longer counts as still on the table.
+      const doneIds = new Set(live.filter(i => i.status === "done").map(i => i.id));
+      const altDone = new Set(live.filter(i => i.altOf && i.status === "done").map(i => i.altOf));
+      const counts = i => i.est && (i.altOf
+        ? !shown.has(i.altOf) || (i.status === "done" && !doneIds.has(i.altOf))
+        : !(altDone.has(i.id) && i.status !== "done"));
       const open = live.filter(i => i.status !== "done");
+      const still = open.filter(i => !lapsed(i));
       const sum = (list, kind) => U.round2(U.sum(list.filter(i => counts(i) && i.est.kind === kind), i => i.est.savings));
       return {
         year: ctx.year, count: ideas.length, open: open.length,
-        potential: sum(open, "saves"), deferral: sum(open, "defers"),
+        potential: sum(still, "saves"), deferral: sum(still, "defers"),
         locked: U.round2(U.sum(live.filter(i => i.status === "done" && counts(i) && i.est.kind !== "defers"), i => i.est.savings)),
-        top: U.sortBy(open.filter(i => counts(i) && i.est.kind === "saves"), i => i.est.savings, -1)[0] || null,
+        top: U.sortBy(still.filter(i => counts(i) && i.est.kind === "saves"), i => i.est.savings, -1)[0] || null,
       };
     });
   }

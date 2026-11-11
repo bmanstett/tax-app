@@ -121,7 +121,9 @@ const App = (() => {
 
   /* ---------- navigation chrome ---------- */
   function refreshNav() {
-    const attentionCount = Alerts.attention(viewYear()).reduce((t, a) => t + (a.severity !== "info" ? a.count : 0), 0);
+    let attentionCount = 0;
+    try { attentionCount = Alerts.attention(viewYear()).reduce((t, a) => t + (a.severity !== "info" ? a.count : 0), 0); }
+    catch (e) { console.error("Attention badge skipped:", e); }
 
     document.getElementById("sidebar-nav").innerHTML = NAV.map(g => `
       <div class="nav-group-label">${g.group}</div>
@@ -257,8 +259,8 @@ const App = (() => {
       }
     });
 
-    render();
-    AppUpdate.init();
+    AppUpdate.init();   // first: if a bad build can't draw, the update banner can still replace it
+    try { render(); } catch (e) { console.error("First draw failed:", e); }
     Inbox.init();   // work orders filed by the intake agent (desktop Chrome/Edge only)
 
     // every work order that comes in is asked: IRS mileage or expenses? Jobs that arrive in

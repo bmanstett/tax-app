@@ -523,7 +523,8 @@ table.data-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
   .ts-side { max-width: 104px; }
   .ts-save { font-size: 15px; }
 }
-.stat-card.clickable:focus-visible, .ts-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.stat-card.clickable:focus-visible, .ts-head:focus-visible,
+.attention-item:focus-visible, .score-line:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ===== Disclaimer ===== */
 .disclaimer {

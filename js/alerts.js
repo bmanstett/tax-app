@@ -139,7 +139,7 @@ const Alerts = (() => {
       title: "Overdue invoices",
       sub: "Follow up on payment",
       items: S.invoices.filter(Store.invoiceIsOverdue),
-      list: invList("Overdue"),
+      list: invList("pastdue"),
     });
     push({
       id: "inv-unpaid", icon: "🧾", route: "invoices", severity: "info", weight: 1,

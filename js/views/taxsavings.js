@@ -237,7 +237,9 @@ const TaxSavings = (() => {
 
       q("[data-ts-stats]").innerHTML = [
         UI.statCard({ label: `Net profit ${year}`, value: U.money(ctx.projNet, { cents: false }),
-          sub: ctx.current && ctx.projNet !== ctx.ytdNet ? `projected · ${money0(ctx.ytdNet)} on the books so far` : "from the books", color: "accent", icon: "📈" }),
+          sub: ctx.t.netProfit < 0 && ctx.projNet === 0 ? `the books show a ${money0(-ctx.t.netProfit)} loss`
+            : ctx.projNet !== ctx.ytdNet ? `${ctx.projFrom === "your estimate" ? "your estimate" : "projected"} · ${money0(ctx.ytdNet)} on the books so far`
+            : "from the books", color: "accent", icon: "📈" }),
         UI.statCard({ label: "Tax you could still save", value: "≈ " + money0(sum.potential), sub: `${sum.open} idea${sum.open === 1 ? "" : "s"} open`, color: "green", icon: "💡" }),
         sum.deferral > 0 ? UI.statCard({ label: "Could move to next year", value: "≈ " + money0(sum.deferral), sub: "timing moves — deferred, not erased", color: "blue", icon: "⏩" }) : "",
         UI.statCard({ label: "Locked in", value: "≈ " + money0(sum.locked), sub: "ideas you've marked done", color: "teal", icon: "✅" }),

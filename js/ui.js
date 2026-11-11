@@ -511,11 +511,15 @@ const UI = (() => {
   const wantCards = () => LV_MOBILE.matches;
   const liveLists = new Set();   // {container, redraw} — the lists on screen
   let cardsDrawn = LV_ONE_LAYOUT ? wantCards() : false;
+  let lvPrinting = false;   // while printing: both layouts and every row, so the print stylesheet chooses as it always did
+  const redrawLive = () => { for (const l of [...liveLists]) { if (l.container.isConnected) l.redraw(); else liveLists.delete(l); } };
   const onLayoutSwap = () => {
     if (wantCards() === cardsDrawn) return;
     cardsDrawn = wantCards();
-    for (const l of [...liveLists]) { if (l.container.isConnected) l.redraw(); else liveLists.delete(l); }
+    redrawLive();
   };
+  window.addEventListener("beforeprint", () => { lvPrinting = true; redrawLive(); });
+  window.addEventListener("afterprint", () => { lvPrinting = false; redrawLive(); });
   if (LV_ONE_LAYOUT) {
     if (LV_MOBILE.addEventListener) LV_MOBILE.addEventListener("change", onLayoutSwap);
     else if (LV_MOBILE.addListener) LV_MOBILE.addListener(onLayoutSwap);
@@ -886,9 +890,9 @@ const UI = (() => {
       paintSlots();
 
       // one page of rows (a prefix of rs, so a row's index is the same in both)
-      drawn = rs.length > stateLV.limit ? rs.slice(0, stateLV.limit) : rs;
+      drawn = rs.length > stateLV.limit && !lvPrinting ? rs.slice(0, stateLV.limit) : rs;
       const more = rs.length - drawn.length;
-      const cards = LV_ONE_LAYOUT ? (cardsDrawn = wantCards()) : null;   // null: draw both, the stylesheet picks
+      const cards = LV_ONE_LAYOUT && !lvPrinting ? (cardsDrawn = wantCards()) : null;   // null: draw both, the stylesheet picks
 
       resultsEl.innerHTML = rs.length === 0 ? (hidden ? `<div class="empty-state">
             <div class="es-icon">🔍</div>
@@ -942,7 +946,7 @@ const UI = (() => {
     function render() { renderToolbar(); renderResults(); }
 
     render();
-    if (LV_ONE_LAYOUT) {
+    {
       for (const l of [...liveLists]) if (!l.container.isConnected) liveLists.delete(l);   // lists that have left the screen
       liveLists.add({ container, redraw: renderResults });
     }

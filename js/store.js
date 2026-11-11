@@ -331,9 +331,13 @@ const Store = (() => {
   function mileageRateH2(year) {
     const h2 = state.settings.mileageRatesH2 || {};
     if (h2[year] != null && Number(h2[year]) > 0) return Number(h2[year]);
-    const rates = state.settings.mileageRates || {};
+    const rates = state.settings.mileageRates || {}, irs = IRS_MILEAGE[year];
+    if (!irs || !irs[1]) return null;
+    // a first-half rate that is the published one (typed in, or filled in by an earlier build)
+    // is "using the IRS rates": the published July 1 rate follows. A different rate is the
+    // owner's own, for the whole year.
     const set = rates[year] != null && Number(rates[year]) > 0;
-    return !set && IRS_MILEAGE[year] && IRS_MILEAGE[year][1] ? IRS_MILEAGE[year][1] : null;
+    return !set || Math.abs(Number(rates[year]) - irs[0]) < 0.0005 ? irs[1] : null;
   }
   /** The rate that applies to a trip on a given day. */
   function mileageRateOn(iso) {
@@ -753,11 +757,10 @@ const Store = (() => {
     return U.daysBetween(s.lastBackupAt.slice(0, 10), U.todayISO()) >= (s.backupReminderDays || 14);
   }
   function markBackedUp() {
+    // (the date only — not markSettingsChanged: exporting on a phone that hasn't pulled yet
+    // would stamp its stale profile newest and undo a settings edit made on the computer)
     state.settings.lastBackupAt = U.nowISO();
-    // A backup is a settings change the other device should see (its reminder clears too) —
-    // but a device that has never owned a stamp (fresh, not yet joined to the sync repo)
-    // must not claim the whole profile just by exporting.
-    if (state.settingsUpdatedAt) markSettingsChanged(); else save();
+    save();
   }
 
   /** Stamp settings as edited on this device *now*, then persist. Multi-device

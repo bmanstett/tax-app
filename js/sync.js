@@ -50,6 +50,11 @@ const Sync = (() => {
     });
   }
 
+  /** A failed request as an Error. GitHub also answers 403 when it is rate-limiting (a burst
+      of attachment uploads): that is marked, so it is retried instead of read as a bad token. */
+  const ghErr = (res, what) => new Error(`GitHub ${res.status}${
+    (res.status === 403 || res.status === 429) && (res.headers.get("retry-after") || res.headers.get("x-ratelimit-remaining") === "0") ? " rate-limited" : ""} ${what}`);
+
   /** Unicode-safe base64 */
   function b64(str) {
     const bytes = new TextEncoder().encode(str);
@@ -62,7 +67,7 @@ const Sync = (() => {
   async function getHead() {
     const res = await api(`/repos/${cfg.repoFull}/commits/HEAD`, { accept: "application/vnd.github.sha" });
     if (res.status === 404 || res.status === 409 || res.status === 422) return "";
-    if (!res.ok) throw new Error(`GitHub ${res.status} reading repo head`);
+    if (!res.ok) throw ghErr(res, "reading repo head");
     return (await res.text()).trim();
   }
 
@@ -70,7 +75,7 @@ const Sync = (() => {
   async function getTree() {
     const res = await api(`/repos/${cfg.repoFull}/git/trees/HEAD?recursive=1`);
     if (res.status === 404 || res.status === 409) return null; // empty repo
-    if (!res.ok) throw new Error(`GitHub ${res.status} reading repo tree`);
+    if (!res.ok) throw ghErr(res, "reading repo tree");
     const json = await res.json();
     const map = {};
     for (const t of json.tree || []) if (t.type === "blob") map[t.path] = t.sha;
@@ -80,7 +85,7 @@ const Sync = (() => {
   async function getRaw(path) {
     const res = await api(`/repos/${cfg.repoFull}/contents/${path}`, { accept: "application/vnd.github.raw+json" });
     if (res.status === 404) return null;
-    if (!res.ok) throw new Error(`GitHub ${res.status} reading ${path}`);
+    if (!res.ok) throw ghErr(res, `reading ${path}`);
     return res.text();
   }
 
@@ -90,7 +95,7 @@ const Sync = (() => {
       body: { message: `sync: ${path}`, content: b64(contentStr), ...(sha ? { sha } : {}) },
     });
     if (res.status === 409 || res.status === 422) { const e = new Error("conflict"); e.conflict = true; throw e; }
-    if (!res.ok) throw new Error(`GitHub ${res.status} writing ${path}`);
+    if (!res.ok) throw ghErr(res, `writing ${path}`);
     return res.json();
   }
 
@@ -100,7 +105,7 @@ const Sync = (() => {
       body: { message: `sync: remove ${path}`, sha },
     });
     if (res.status === 409 || res.status === 422) { const e = new Error("conflict"); e.conflict = true; throw e; }
-    if (!res.ok && res.status !== 404) throw new Error(`GitHub ${res.status} deleting ${path}`);
+    if (!res.ok && res.status !== 404) throw ghErr(res, `deleting ${path}`);
   }
 
   /* ---------- merge ---------- */
@@ -171,6 +176,16 @@ const Sync = (() => {
       .sort(newestFirst).slice(0, 4000);
 
     const s = mergeSettings(local, remote);
+    // The Tax Savings plan carries its own stamp (taxideas.js): whichever profile wins, the
+    // plan edited last stays, so marking an idea done on the phone and saving something in
+    // Settings on the computer don't cancel each other. On a first sync the rules above
+    // decide instead (a newcomer never replaces the synced plan) — except that a plan is
+    // never dropped for no plan at all.
+    const planAt = p => (p && p.updatedAt) || "";
+    for (const p of [(local.settings || {}).taxPlan, (remote.settings || {}).taxPlan]) {
+      const cur = s.settings.taxPlan;
+      if (p && (!cur || (cfg.lastSyncAt && planAt(p) > planAt(cur)))) s.settings.taxPlan = U.clone(p);
+    }
     merged.settings = s.settings;
     merged.settingsUpdatedAt = s.stamp;
     // home office: it carries its own updatedAt
@@ -195,8 +210,12 @@ const Sync = (() => {
       }
       return "";
     };
+    // …and only when the two copies disagree: a year both list was locked again after that
+    // entry (earlier builds re-locked every unlock at the next sync, leaving the entry behind —
+    // honouring it now would quietly unlock the year on every device).
+    const lists = (s, y) => (s.lockedYears || []).map(Number).includes(y);
     merged.lockedYears = [...new Set([...(local.lockedYears || []), ...(remote.lockedYears || [])].map(Number))]
-      .filter(y => lastLockChange(y) !== "unlocked").sort();
+      .filter(y => (lists(local, y) && lists(remote, y)) || lastLockChange(y) !== "unlocked").sort();
     // duplicate pairs dismissed as "keep both" — union, so reviewing on one device settles it
     // everywhere; except a pair whose newest note in the merged audit trail is an "undo"
     const lastDupe = {};
@@ -419,7 +438,7 @@ const Sync = (() => {
         return { deferred: true };
       }
       console.warn("Sync failed:", e);
-      const authErr = /^GitHub (401|403)\b/.test(e.message);
+      const authErr = /^GitHub (401|403)(?! rate-limited)\b/.test(e.message);
       if (authErr) {
         // say so once, then re-check every 10 minutes (and at once on a manual sync or a new
         // token) — not on every 20-second poll, each with its own 7-second red toast

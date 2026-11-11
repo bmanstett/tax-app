@@ -28,7 +28,9 @@ HTTPS, open the URL on your phone, and add it to the home screen — it then lau
 like a native app and works offline. The service worker caches the whole app when it installs
 and is network-first, so new deploys are picked up automatically on the next online launch — but
 it waits only four seconds for the page: on a weak signal at a loss site the app starts from its
-cached copy instead of a blank screen, and offers the update once it can reach the server.
+cached copy instead of a blank screen, and offers the update once it can reach the server. The
+cached copy is always one complete build: a new version replaces it only after every file has
+downloaded, so a download that breaks off half-way can't leave new and old files mixed.
 
 1. **Host it** — e.g. GitHub Pages: push this folder to a repo, enable Pages
    (Settings → Pages → deploy from branch). Netlify/Cloudflare Pages also work.
@@ -84,7 +86,7 @@ Clear it anytime: **Settings → Clear ALL data**, then start fresh.
 | **Invoices** | Flat/hourly billing + mileage & expense reimbursements, aging, partial payments, printable invoice, income reconciliation. Marking one paid (or closing its work order) fills the **payment date with that day and the method with ACH / Direct Deposit** unless you set them yourself, and **asks whether the job's travel counts as IRS mileage (the home-office round trip is logged for you) or as expenses** if the job hasn't said yet |
 | **Income** | All money in, 1099 tracking, **state sourcing** (which state's return each dollar belongs on — see below), and the **1099 Reconciliation tool** (compare 1099s received vs. recorded income) |
 | **Expenses** | Schedule C-style categories, business purpose, **receipt upload right on the expense form** (📷 Take photo / 📁 Choose file with preview) plus **one-tap 📎 Attach on every expense row/card** — no need to open the form; attached receipts open in a viewer from the list; business-use %, reimbursable tracking, CPA-review flags; and **expenses the Crew files in `CYxx\Receipts` are logged by Ledger with the receipt attached** (see below) |
-| **Mileage** | Field-optimized **⚡ Quick trip** logging, **automatic round trips on paid jobs you count as IRS mileage** (badged “Auto” — distance routed from your home base to the loss location), odometer support, the IRS rate by trip date (**2026 has two: 72.5¢ through June, 76¢ from July 1**), substantiation score, CSV log export |
+| **Mileage** | Field-optimized **⚡ Quick trip** logging, **automatic round trips on paid jobs you count as IRS mileage** (badged “Auto” — distance routed from your home base to the loss location), odometer support, the IRS rate by trip date (**2026 has two: 72.5¢ through June, 76¢ from July 1** — applied automatically unless you set your own rate), substantiation score, CSV log export |
 | **Receipts** | Attach photos/PDFs (stored locally in IndexedDB) or reference cloud/paper locations; missing-receipt report |
 | **Assets** | Equipment purchases flagged for depreciation / Section 179 CPA review |
 | **Home Office** | Square footage, simplified/actual-method inputs, CPA notes, and the house's **utility bills** (electric, gas, water, internet) with a month-by-month coverage grid and the office's share — organizer only; the bills never enter expenses |
@@ -111,7 +113,8 @@ lists what applies to you, biggest saving first.
   "confirm it's already claimed"), what in your books triggered it, how to do it, **what makes it
   hold up** on examination, **where the line is** (what would make it disallowed, penalised or
   fraud), the authority (Code sections, regulations, IRS notices, cases), and the deadline with
-  days left. Mark each *Done*, *Planning it* or *Not for me*; the choices sync.
+  days left. Mark each *Done*, *Planning it* or *Not for me*; the choices sync, and a mark made
+  on the phone isn't undone by a Settings change saved on the computer (or the other way round).
 - **What's in it:** solo 401(k) / SEP / cash-balance plan, HSA, health-premium deduction, the 20%
   business-income deduction as an *engineering* practice, an S-corporation break-even computed
   net of everything it costs, business taxes and loan interest on Schedule C, multi-state
@@ -384,9 +387,11 @@ const APP_BUILD = { version: "2026.11.10-1", notes: "What changed." };
 Bump it, then `git push` — that's the deploy. Every open copy of the app re-fetches that file in
 the background (on a timer, when you switch back to it, and when it comes back online). When the
 deployed stamp stops matching the running one, a banner offers **Sync & refresh**: it pushes this
-device's records, clears the caches, and reloads onto the new code. The banner disappears as soon
+device's records, clears the caches, and reloads onto the new code (if part of the download
+fails on a weak signal it says so and stays on the working version). The banner disappears as soon
 as the app is up to date, and confirms with “✓ Updated to …”. **Settings → App version** shows what
-you're running and checks on demand.
+you're running and checks on demand. The stamp is also how the service worker knows its offline
+copy is out of date — so bump it with every deploy.
 
 ## Data & backups
 
