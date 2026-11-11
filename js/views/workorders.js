@@ -136,7 +136,7 @@ const WO = (() => {
     if (!Store.update("workOrder", w.id, patch)) {
       // refused: nothing changed, so nothing is announced as done and nothing follows
       if (!Store.get("workOrder", w.id)) {
-        UI.toast(`${w.woNumber || "This work order"} no longer exists — it was deleted on another device`, "error", 5000);
+        UI.toast(`${w.woNumber || "This work order"} no longer exists — it was deleted (possibly on your other device)`, "error", 5000);
         App.rerender();
       } else if (!document.getElementById("modal-root").children.length) {
         UI.toast(`${w.woNumber || "This work order"} is in a locked tax year — unlock the year on the Taxes page to change it`, "error", 5500);

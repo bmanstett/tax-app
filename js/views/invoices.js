@@ -231,7 +231,7 @@ const Invoices = (() => {
       // refused: say so — this used to announce "Marked paid" over an invoice that hadn't changed
       UI.toast(Store.get("invoice", inv.id)
         ? `${inv.invoiceNumber || "This invoice"} wasn't changed — its tax year is locked (unlock it on the Taxes page)`
-        : `${inv.invoiceNumber || "This invoice"} no longer exists — it was deleted on another device`, "error", 5500);
+        : `${inv.invoiceNumber || "This invoice"} no longer exists — it was deleted (possibly on your other device)`, "error", 5500);
       App.rerender();
       return;
     }

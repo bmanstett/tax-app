@@ -338,6 +338,12 @@ Views.settings = {
       if (el.querySelector(`[data-rate-row="${yr}"]`)) return;   // already listed
       el.querySelector("#st-rates").insertAdjacentHTML("beforeend", rateRowHtml(yr, "", ""));
     });
+    g("#st-rates").addEventListener("input", e => {
+      const y = e.target.getAttribute("data-rate-year");
+      if (!y) return;
+      const irs = Store.IRS_MILEAGE[y], h2 = el.querySelector(`[data-rate-year-h2="${y}"]`), v = Number(e.target.value);
+      if (h2) h2.placeholder = irs && irs[1] && (!(v > 0) || Math.abs(v - irs[0]) < 0.0005) ? irs[1] : "—";
+    });
     // fill every listed year the IRS has published — still needs "Save tax assumptions"
     g("#st-irs-rates").addEventListener("click", () => {
       let n = 0;
