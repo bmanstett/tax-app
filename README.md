@@ -61,6 +61,11 @@ as an off-device backup with full history (every sync is a git commit).
 - **Settings:** the device that saved Settings last wins. A new install's blank profile never
   does: a device turning sync on for the first time takes the synced profile, keeping only the
   changes made on it since (say, one tax assumption) when they're newer.
+- **What isn't a Settings save:** marking a Tax Savings idea, ticking the year-end checklist and
+  exporting a backup each travel on their own, so none of them can out-vote a Settings change
+  still waiting on the other device. The Tax Savings plan edited last wins; each checklist item
+  follows its newest tick or untick (an untick reaches the other device too); and the later of
+  the two last-backup dates is kept, so the backup reminder clears on both.
 - **Safety rails:** sync refuses to write to a public repo, and the token is stored only on
   the device (never in JSON backups or the synced data). A new or reset device that joins takes
   the repo's business profile rather than overwriting it with blank defaults; turning sync on
@@ -381,7 +386,7 @@ the desktop.
 `js/version.js` holds the build stamp, and it's the only place to bump it:
 
 ```js
-const APP_BUILD = { version: "2026.11.10-1", notes: "What changed." };
+const APP_BUILD = { version: "2026.11.11-1", notes: "What changed." };
 ```
 
 Bump it, then `git push` — that's the deploy. Every open copy of the app re-fetches that file in

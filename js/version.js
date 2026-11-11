@@ -7,6 +7,6 @@
 "use strict";
 
 const APP_BUILD = {
-  version: "2026.11.10-1",
-  notes: "Dashboard tiles open just their records. New Tax Savings page. Faster lists, lighter sync, 2026 mileage rates.",
+  version: "2026.11.11-1",
+  notes: "Sync: unticking a year-end checklist item reaches your other device, the last-backup date survives a sync, and marking a Tax Savings idea no longer overrides a Settings change made on the other device.",
 };

@@ -95,11 +95,12 @@ const TaxIdeas = (() => {
     const tp = s.taxPlan = { profile: {}, years: {}, ideas: {}, ...(s.taxPlan || {}) };
     fn(tp);
     // The plan has its own stamp, and sync keeps the plan edited last whichever settings
-    // profile wins (Sync.mergeStates). The profile stamp moves with it too, so a device on an
-    // earlier build takes the change. (A new install can't claim the profile this way: sync
-    // never lets a factory profile replace a real one — Store.isFactorySettings.)
+    // profile wins (Sync.mergeStates). The profile stamp stays where it is: a mark made on
+    // the phone is not a Settings save, and stamping it as one let the phone's profile
+    // out-vote a Settings edit the computer hadn't synced yet. (Builds before 2026.11.10
+    // had no plan stamp and needed the profile's to carry the plan.)
     tp.updatedAt = U.nowISO();
-    Store.markSettingsChanged();
+    Store.save();
   }
   function saveProfile(patch) { mutatePlan(tp => { tp.profile = { ...(tp.profile || {}), ...patch }; }); }
   function saveYearFacts(year, patch) {

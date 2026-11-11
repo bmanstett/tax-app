@@ -125,6 +125,16 @@ const Sync = (() => {
       looked like a pulled change, redrew the page and re-uploaded the books.) */
   const newestFirst = (a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
 
+  /** A copy's last-backup date. In data.json it sits beside the settings, not inside them
+      (forRepo): a device still on build 2026.11.10 ranks a blank date inside the profile above
+      a real one and uploads its blank over it each time it sees one, so two devices on
+      different builds would re-upload the books at each other for as long as both were open.
+      Beside the settings, that build leaves the date alone. Both places are read — a copy
+      written by that build can carry the date in its settings. */
+  const backupDate = st => [st.lastBackupAt || "", (st.settings || {}).lastBackupAt || ""].sort()[1];
+  /** The books as data.json holds them. */
+  const forRepo = st => ({ ...st, settings: { ...st.settings, lastBackupAt: null }, lastBackupAt: backupDate(st) || null });
+
   /** Everything that syncs, as one string that doesn't care what order the lists are in.
       Two devices holding the same books never produced the same raw JSON — a record pulled
       from the other device sits at the end of the list here and at the front there, and
@@ -134,7 +144,8 @@ const Sync = (() => {
     const set = arr => (arr || []).map(x => JSON.stringify(x)).sort();
     const o = {   // canon(): keys in a fixed order, so {a, b} and {b, a} read the same
 
-      settings: canon({ ...(s.settings || {}), theme: "" }), settingsUpdatedAt: s.settingsUpdatedAt || "",
+      settings: canon({ ...(s.settings || {}), theme: "", lastBackupAt: "" }), backupAt: backupDate(s),
+      settingsUpdatedAt: s.settingsUpdatedAt || "",
       homeOffice: canon(s.homeOffice || {}), yearChecklists: canon(s.yearChecklists || {}),
       lockedYears: [...(s.lockedYears || [])].map(Number).sort(), dupeIgnores: [...(s.dupeIgnores || [])].sort(),
       demoDataLoaded: !!s.demoDataLoaded,
@@ -192,16 +203,37 @@ const Sync = (() => {
       const cur = s.settings.taxPlan;
       if (p && (!cur || (cfg.lastSyncAt && planAt(p) > planAt(cur)))) s.settings.taxPlan = U.clone(p);
     }
+    // The last-backup date is saved without stamping the profile (Store.markBackedUp), so it
+    // can't ride on whichever profile wins: the later date is kept. (Left to the equal-stamp
+    // tie-break it lost to a blank — "null" sorts above any date — so the date was wiped at
+    // the next pull and the backup reminder never cleared.)
+    const backupAt = [local, remote].map(backupDate).sort()[1];
+    if (backupAt) s.settings.lastBackupAt = backupAt;
     merged.settings = s.settings;
     merged.settingsUpdatedAt = s.stamp;
     // home office: it carries its own updatedAt
     if (((remote.homeOffice || {}).updatedAt || "") > ((local.homeOffice || {}).updatedAt || "")) {
       merged.homeOffice = remote.homeOffice;
     }
-    // year checklists: merge per year, local wins per item
+    // year checklists: merge per year, local wins per item…
     merged.yearChecklists = merged.yearChecklists || {};   // (a copy from an old build may not have one)
     for (const [y, obj] of Object.entries(remote.yearChecklists || {})) {
       merged.yearChecklists[y] = { ...(obj || {}), ...(merged.yearChecklists[y] || {}) };
+    }
+    // …except an item with a tick or untick in the merged audit trail (Store.setYearCheck):
+    // its newest entry decides, on every device. "Local wins" alone meant an untick never
+    // travelled — the other copy still had the tick and kept it. Items last touched before
+    // entries were written have none, and stay as they are.
+    const settled = new Set();
+    for (const a of merged.auditLog) {   // newest first
+      if (a.recordId !== "yearChecklist") continue;
+      for (const c of a.changes || []) {
+        const cut = String(c.field).indexOf(":");   // "2026:backup"
+        if (cut < 1 || settled.has(c.field)) continue;
+        settled.add(c.field);
+        const y = c.field.slice(0, cut);
+        (merged.yearChecklists[y] = merged.yearChecklists[y] || {})[c.field.slice(cut + 1)] = !!c.to;
+      }
     }
     // locked years: union — except a year whose newest lock/unlock entry in the merged audit
     // trail is an unlock. A plain union meant an unlock never survived a sync: the other copy
@@ -244,7 +276,8 @@ const Sync = (() => {
         by key, never the whole profile: a phone that set one tax assumption before turning sync
         on brings that one value, not its blanks;
       - equal stamps with different content settle on the same profile on every device.
-      The theme always stays local. → {settings, stamp} */
+      The theme always stays local, and the last-backup date is settled apart (mergeStates).
+      → {settings, stamp} */
   function mergeSettings(local, remote) {
     const ls = local.settings || {}, rs = remote.settings;
     const lt = local.settingsUpdatedAt || "", rt = remote.settingsUpdatedAt || "";
@@ -268,7 +301,7 @@ const Sync = (() => {
       return { settings: U.clone({ ...rs, ...mine, theme: ls.theme }), stamp: local.settingsUpdatedAt };
     }
     if (lt !== rt) return rt > lt ? takeRemote : keepLocal;
-    const bare = o => canon({ ...o, theme: null });
+    const bare = o => canon({ ...o, theme: null, lastBackupAt: null });   // (the backup date is settled apart — mergeStates)
     return bare(rs) > bare(ls) ? takeRemote : keepLocal;   // same stamp: the same pick everywhere
   }
 
@@ -362,7 +395,7 @@ const Sync = (() => {
           app: "Anstett Consulting — Books & Tax Organizer",
           syncedAt: U.nowISO(),
           schemaVersion: Store.state.schemaVersion,
-          data: Store.state,
+          data: forRepo(Store.state),
         });
         await putFile("data.json", payload, tree["data.json"]);
         wrote = true;

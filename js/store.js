@@ -189,6 +189,20 @@ const Store = (() => {
     return true;
   }
 
+  /* ---------- year-end checklist ---------- */
+  /** Tick or untick a year-end checklist item (Taxes page; the backup and CPA exports tick
+      theirs). Every change leaves an audit entry, and sync settles each item by its newest
+      entry on every device — which is how an untick reaches the other device. Keep the
+      entry's shape: Sync's merge reads it. */
+  function setYearCheck(year, key, value) {
+    const y = String(year), on = !!value;
+    const list = state.yearChecklists[y] = state.yearChecklists[y] || {};
+    if (!!list[key] === on) return;
+    logAudit("updated", "settings", { id: "yearChecklist" }, [{ field: `${y}:${key}`, from: !on, to: on }]);
+    list[key] = on;
+    save();
+  }
+
   /* ---------- audit trail ---------- */
   function logAudit(action, recordType, rec, changes = []) {
     state.auditLog.unshift({
@@ -758,7 +772,8 @@ const Store = (() => {
   }
   function markBackedUp() {
     // (the date only — not markSettingsChanged: exporting on a phone that hasn't pulled yet
-    // would stamp its stale profile newest and undo a settings edit made on the computer)
+    // would stamp its stale profile newest and undo a settings edit made on the computer.
+    // Sync keeps the later date of the two copies instead — Sync's merge.)
     state.settings.lastBackupAt = U.nowISO();
     save();
   }
@@ -885,7 +900,7 @@ const Store = (() => {
     incomeWorkOrder, incomeStateSource, incomeStateSplit, stateIncomeSummary,
     findDuplicates, setDuplicateIgnored, statusChangedAt, integrityCheck,
     exportJSON, importJSON, validateImport, resetAll, applySynced,
-    isYearLocked, recordLocked, backupDue, markBackedUp, markSettingsChanged,
+    isYearLocked, recordLocked, setYearCheck, backupDue, markBackedUp, markSettingsChanged,
     isFactorySettings, officeAddress,
     /** A route longer than this each way is refused when logged automatically and needs your
         OK when calculated in a form: the longest real drive so far is about 190 miles, and a
