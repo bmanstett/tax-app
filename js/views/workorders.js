@@ -11,14 +11,18 @@ const WO = (() => {
   const TM = SCHEMA.travelMethods;   // how a job's travel counts: IRS mileage / Expenses / No travel
 
   /* ---- derived helpers ---- */
+  /* Everything linked to a job. These come off Store's lookup tables (rebuilt only
+     when a record changes), so a list of a few hundred jobs — which asks this several
+     times per row — no longer walks every invoice, expense and trip for each one.
+     The arrays are shared: read them, never change them in place. */
+  const linkedRecs = (type, w) => Store.linkedTo(type, "workOrderId", w.id);
   function linked(w) {
-    const S = Store.state;
     return {
-      invoices: S.invoices.filter(i => i.workOrderId === w.id),
-      income: S.income.filter(i => i.workOrderId === w.id),
-      expenses: S.expenses.filter(e => e.workOrderId === w.id),
-      mileage: S.mileage.filter(m => m.workOrderId === w.id),
-      receipts: S.receipts.filter(r => r.workOrderId === w.id),
+      invoices: linkedRecs("invoice", w),
+      income: linkedRecs("income", w),
+      expenses: linkedRecs("expense", w),
+      mileage: linkedRecs("mileage", w),
+      receipts: linkedRecs("receipt", w),
     };
   }
 
@@ -108,8 +112,8 @@ const WO = (() => {
 
   /** true when the job is expected to produce an invoice but none exists yet */
   function isPendingInvoice(w) {
-    if (![...SCHEMA.woOpenStatuses, "Submitted"].includes(w.status)) return false;
-    return !Store.state.invoices.some(i => i.workOrderId === w.id);
+    if (w.status !== "Submitted" && !SCHEMA.woOpenStatuses.includes(w.status)) return false;
+    return !linkedRecs("invoice", w).length;
   }
 
   /* ---- quick status change ---- */
@@ -129,7 +133,12 @@ const WO = (() => {
       patch.invoiceDate = patch.reportSubmittedDate || w.reportSubmittedDate;
       if (patch.invoiceDate) notes.push("invoice date = submit date");
     }
-    Store.update("workOrder", w.id, patch);
+    if (!Store.update("workOrder", w.id, patch)) {
+      // refused (a locked tax year): nothing changed, so nothing is announced and nothing follows
+      if (!document.getElementById("modal-root").children.length)
+        UI.toast(`${w.woNumber || "This work order"} is in a locked tax year — unlock the year on the Taxes page to change it`, "error", 5500);
+      return;
+    }
     // a paid/closed job settles its invoice too: fill any blank payment date or method
     if (["Paid", "Closed"].includes(status)) {
       const filled = Store.state.invoices
@@ -164,7 +173,7 @@ const WO = (() => {
       onSave: vals => {
         const before = rec ? (Store.get("workOrder", rec.id) || rec) : null;
         const saved = rec ? Store.update("workOrder", rec.id, vals) : Store.add("workOrder", vals);
-        UI.toast(rec ? "Work order updated" : "Work order added", "success");
+        if (saved) UI.toast(rec ? "Work order updated" : "Work order added", "success");
         if (saved && opts.afterSave) opts.afterSave(saved);
         App.rerender();
         if (saved) {
@@ -195,7 +204,7 @@ const WO = (() => {
     const m = String(w.mileageAmount || "").match(/\$?\s*(\d+(?:\.\d+)?)\s*(?:\/|per)\s*mi/i);
     if (m) { const r = Number(m[1]); if (r > 0 && r < 10) return r; }
     // IRS rate for the year the driving happened (inspection), else assignment year
-    return Store.mileageRate(U.yearOf(w.inspectionDate || w.dateAssigned || U.todayISO()));
+    return Store.mileageRateOn(w.inspectionDate || w.dateAssigned || U.todayISO());
   }
 
   function routeStart() {
@@ -227,8 +236,11 @@ const WO = (() => {
     if (!to) { UI.toast("This work order has no loss-location address yet — add one under Insured & property", "error", 5000); return; }
     const copying = U.copyText(to);                       // starts inside the user gesture
     const url = U.mapsDirectionsUrl(to);
-    const win = window.open(url, "_blank", "noopener");    // ditto — never after an await
-    if (!win) location.href = url;                        // popup blocked: go there directly
+    // (no "noopener" in the features: with it window.open() always returns null, which
+    // looked like a blocked popup and sent this page to Google Maps as well)
+    const win = window.open(url, "_blank");               // ditto — never after an await
+    if (win) { try { win.opener = null; } catch (e) { /* cross-origin already — fine */ } }
+    else location.href = url;                             // popup really blocked: go there directly
     copying.then(ok => UI.toast(ok
       ? `📋 Copied — ${U.truncate(to, 40)} · opening Google Maps`
       : `Opening Google Maps — ${U.truncate(to, 40)}`, "success", 4500));
@@ -241,19 +253,19 @@ const WO = (() => {
      the mileage log. (A job that doesn't say yet is asked — see "travel"
      below — and one counted as expenses never gets a trip.) */
 
-  const hasMileage = w => Store.state.mileage.some(m => m.workOrderId === w.id);
+  const hasMileage = w => linkedRecs("mileage", w).length > 0;
 
   /** True once the job has actually been paid — a paid invoice, or the work
       order itself moved to Paid/Closed. */
   function isPaid(w) {
     if (["Paid", "Closed"].includes(w.status)) return true;
-    return Store.state.invoices.some(i => i.workOrderId === w.id && i.status === "Paid");
+    return linkedRecs("invoice", w).some(i => i.status === "Paid");
   }
 
   /** The day the driving happened, best evidence first. The inspection is the
       trip; the invoice dates are only a fallback for jobs logged after the fact. */
   function tripDateFor(w) {
-    const inv = Store.state.invoices.filter(i => i.workOrderId === w.id && i.status === "Paid")[0];
+    const inv = linkedRecs("invoice", w).find(i => i.status === "Paid");
     return w.inspectionDate || w.reportSubmittedDate || w.dateAssigned ||
       (inv && (inv.paymentDate || inv.invoiceDate)) || w.paymentDate || U.todayISO();
   }
@@ -264,6 +276,11 @@ const WO = (() => {
   /** The drive (or flight) has plausibly happened: the job is inspected or further along, or paid. */
   const TRIP_DONE = ["Inspected", "Report Drafting", "Submitted", "Invoiced", "Paid", "Closed"];
   const tripDone = w => TRIP_DONE.includes(w.status) || isPaid(w);
+
+  /** The trip has happened, the job isn't counted as expenses or no travel, and nothing is
+      in the mileage log for it — miles that are deductible but not being deducted. */
+  const tripNotLogged = w => w.status !== "Cancelled" && tripDone(w) &&
+    w.travelMethod !== TM.EXPENSES && w.travelMethod !== TM.NONE && !hasMileage(w);
 
   /** Jobs set to IRS mileage that are paid, have an address to route to, and no trip logged yet. */
   function pendingAutoMileage() {
@@ -339,6 +356,11 @@ const WO = (() => {
     try { localStorage.setItem(SKIP_KEY, JSON.stringify(next.slice(-300))); } catch (e) { /* full — no matter */ }
   }
   const skipClear = () => { try { localStorage.removeItem(SKIP_KEY); } catch (e) { /* no matter */ } };
+  /* The network or the map service failed (offline, a 408/429, a 5xx): that says nothing about
+     the address, so the job is left for the next launch instead of being parked. Other
+     refusals (a 400 or 403, an address that can't be found) still park, as before. */
+  const routeErrorIsTransient = e => !navigator.onLine || e instanceof TypeError ||
+    /failed \((408|429|5\d\d)\)/.test(String((e && e.message) || ""));
 
   /** Work through every paid job missing its mileage, one at a time.
       → {total, logged, miles, skipped, failed:[{wo, reason}]} */
@@ -355,7 +377,8 @@ const WO = (() => {
         else { out.skipped++; if (r.status === "failed") { out.failed.push({ wo: w, reason: r.reason }); skipAdd(w.id, r.reason); } }
       } catch (e) {
         out.failed.push({ wo: w, reason: e.message });
-        skipAdd(w.id, e.message);
+        if (!routeErrorIsTransient(e)) skipAdd(w.id, e.message);
+        else if (useSkipList) break;   // the background sweep, and the service is down: stop — the next launch retries
       }
     }
     return out;
@@ -390,7 +413,7 @@ const WO = (() => {
   /** Startup sweep: catch up any paid job whose trip was never logged — jobs
       entered before this existed, imported, or synced in from another device. */
   async function autoMileageSweep() {
-    if (!routeStart()) return null;                       // no office address to route from
+    if (!navigator.onLine || !routeStart()) return null;   // offline, or no office address to route from
     const todo = pendingAutoMileage().filter(w => !skipList().some(x => x.id === w.id));
     if (!todo.length) return null;
     UI.toast(`🚗 Logging round-trip mileage for ${todo.length} paid job${todo.length > 1 ? "s" : ""}…`, "default", 4000);
@@ -595,7 +618,7 @@ const WO = (() => {
         <div class="travel-choices" data-travel-choices>${choices()}</div>
       </div>`;
     };
-    const rate = Store.mileageRate(U.yearOf(tripDateFor(list[0])) || new Date().getFullYear());
+    const rate = Store.mileageRateOn(tripDateFor(list[0]) || U.todayISO());
 
     const m = UI.modal({
       title: single
@@ -604,7 +627,7 @@ const WO = (() => {
       body: `
         <p class="travel-intro">How do you get to the loss location — your own vehicle, or a rental, flight or rideshare — and how should that count on your taxes?</p>
         <ul class="travel-help">
-          <li><strong>🚗 IRS mileage</strong> — you drive your own vehicle. The round trip from your home base is logged at the IRS rate ($${rate.toFixed(2)}/mi) once the job is paid; that covers the car's running costs, so don't also log its gas or repairs.</li>
+          <li><strong>🚗 IRS mileage</strong> — you drive your own vehicle. The round trip from your home base is logged at the IRS rate (${Store.fmtRate(rate)}/mi) once the job is paid; that covers the car's running costs, so don't also log its gas or repairs.</li>
           <li><strong>💳 Expenses</strong> — you don't drive your own vehicle: rental car and its fuel, flight, rideshare… Enter what getting there actually costs as expenses on the job. No mileage is logged.</li>
           <li>Either way, <strong>parking, tolls, lodging and meals</strong> still go in as expenses on the job.</li>
         </ul>
@@ -768,14 +791,13 @@ const WO = (() => {
     const drove = w.travelMethod !== TM.EXPENSES && w.travelMethod !== TM.NONE;
     const autoCalc = drove && w.mileageAllowed && w.mileageReimbType !== "Flat fee" && !billableTrips.length && !!(w.lossLocation || "").trim();
     const exReimb = U.round2(U.sum(L.expenses.filter(e => e.reimbursable && !e.reimbursed), e => e.amount));
-    const nextNum = `INV-${App.viewYear()}-${String(Store.all("invoice").length + 1).padStart(3, "0")}`;
+    const nextNum = Invoices.nextNumber();
     const terms = (client && client.paymentTerms) || Store.state.settings.defaultPaymentTerms || "Net 30";
     const days = { "Due on Receipt": 0, "Net 15": 15, "Net 30": 30, "Net 45": 45, "Net 60": 60 }[terms] ?? 30;
-    const due = new Date(); due.setDate(due.getDate() + days);
     const m = UI.openForm("invoice", null, {
       presets: {
         invoiceNumber: nextNum, clientId: w.clientId, workOrderId: w.id,
-        invoiceDate: U.todayISO(), dueDate: due.toISOString().slice(0, 10),
+        invoiceDate: U.todayISO(), dueDate: U.addDaysISO(U.todayISO(), days),
         status: "Draft",
         serviceDescription: `${w.serviceType || "Professional engineering services"} — ${w.jobType ? w.jobType + " loss, " : ""}claim ${w.claimNumber || "—"} (${w.woNumber || "WO"})`,
         feeType: w.feeType === "Hourly" ? "Hourly" : "Flat Fee",
@@ -786,6 +808,7 @@ const WO = (() => {
       },
       onSave: vals => {
         const inv = Store.add("invoice", vals);
+        if (!inv) return;   // refused (a locked tax year) — leave the job and its reimbursables as they were
         if (w.status === "Submitted" || SCHEMA.woOpenStatuses.includes(w.status)) Store.update("workOrder", w.id, { status: "Invoiced", invoiceDate: vals.invoiceDate });
         // mark reimbursables as billed
         L.mileage.filter(m => m.reimbursable && !m.reimbursed).forEach(m => Store.update("mileage", m.id, { reimbursed: true, notes: ((m.notes || "") + ` Billed on ${inv.invoiceNumber}.`).trim() }));
@@ -797,15 +820,25 @@ const WO = (() => {
     });
     // fill the mileage line from the route once the form is open (non-blocking)
     if (autoCalc && m && m.body) {
-      const field = m.body.querySelector('[data-key="mileageReimb"]');
+      // the lookup takes a few seconds, and changing any dropdown rebuilds the form's inputs
+      // meanwhile — so the amount is written to the field that's on the form when it arrives
+      const liveField = () => (m.el.isConnected ? m.body.querySelector('[data-key="mileageReimb"]') : null);
+      const field = liveField();
       if (field) {
         field.disabled = true;
         UI.toast("Calculating mileage from the route…");
         calcRouteMileageReimb(w).then(res => {
-          field.value = res.amount; field.disabled = false;
-          UI.toast(`Mileage: ${U.num(res.miles, 1)} mi × $${res.rate.toFixed(2)}/mi = ${U.money(res.amount)} — edit if needed`, "success", 5000);
+          const f = liveField();
+          if (!f) return;                                   // form saved or cancelled meanwhile
+          f.disabled = false;
+          // the form was rebuilt and an amount typed by hand since: keep it
+          if (f !== field && f.value !== "" && Number(f.value) !== Number(field.value)) return;
+          f.value = res.amount;
+          UI.toast(`Mileage: ${U.num(res.miles, 1)} mi × ${Store.fmtRate(res.rate)}/mi = ${U.money(res.amount)} — edit if needed`, "success", 5000);
         }).catch(e => {
-          field.disabled = false;
+          const f = liveField();
+          if (!f) return;
+          f.disabled = false;
           UI.toast(`Mileage not auto-calculated (${e.message}). Use 📍 Calculate on the field.`, "error", 6000);
         });
       }
@@ -1016,15 +1049,15 @@ const WO = (() => {
         case "edit": m.close(); openEditor(w); break;
         case "mileage":
           UI.openForm("mileage", null, { presets: { ...presets, businessPurpose: `Inspection — ${w.jobType || "site"} (${w.woNumber || ""})`.trim(), destination: (w.lossLocation || "").split("\n")[0], reimbursable: !!w.mileageAllowed },
-            onSave: v => { Store.add("mileage", v); UI.toast("Mileage logged", "success"); m.close(); openDetail(w); } });
+            onSave: v => { if (!Store.add("mileage", v)) return; UI.toast("Mileage logged", "success"); App.rerender(); m.close(); openDetail(w); } });
           break;
         case "expense":
           UI.openForm("expense", null, { presets: { ...presets, businessPurpose: `Job expense — ${w.woNumber || ""}`.trim() },
-            onSave: v => { Store.add("expense", v); UI.toast("Expense added", "success"); m.close(); openDetail(w); } });
+            onSave: v => { if (!Store.add("expense", v)) return; UI.toast("Expense added", "success"); App.rerender(); m.close(); openDetail(w); } });
           break;
         case "receipt":
           UI.openForm("receipt", null, { presets: { workOrderId: w.id },
-            onSave: v => { Store.add("receipt", v); UI.toast("Receipt saved", "success"); m.close(); openDetail(w); } });
+            onSave: v => { if (!Store.add("receipt", v)) return; UI.toast("Receipt saved", "success"); App.rerender(); m.close(); openDetail(w); } });
           break;
         case "invoice": createInvoiceFrom(w, m); break;
         case "submitted":
@@ -1037,7 +1070,7 @@ const WO = (() => {
     });
   }
 
-  return { openEditor, openDetail, duplicate, createInvoiceFrom, warnings, jobFinancials, feeText, linked, changeStatus, openStatusSheet, expectedFee, isPendingInvoice, billingState, calcRouteMileageReimb, mileageBillRate, stateSource, stateSplitText,
+  return { openEditor, openDetail, duplicate, createInvoiceFrom, warnings, jobFinancials, feeText, linked, changeStatus, openStatusSheet, expectedFee, isPendingInvoice, tripNotLogged, billingState, calcRouteMileageReimb, mileageBillRate, stateSource, stateSplitText,
     lossAddress, openDirections, isPaid, tripDateFor, pendingAutoMileage, autoLogMileage, autoLogMileageOnPaid, backfillPaidMileage, autoMileageSweep, skipList, skipClear, routeStart,
     needsTravelChoice, travelChoicePending, travelText, chooseTravel, openTravelChooser, openTravelExpense,
     noticeArrivals, reseedArrivals, seedArrivals, askWhenIdle, flushTravelAsk };
@@ -1073,18 +1106,26 @@ Views.workorders = {
       filters: [
         { id: "status", label: "Status", multi: true, options: SCHEMA.workOrderStatuses.map(s => s.value), apply: (w, v) => w.status === v },
         { id: "client", label: "Client", options: () => Store.all("client").map(c => ({ value: c.id, label: c.name })), apply: (w, v) => w.clientId === v },
+        // same test as Store.yearData: a job belongs to the year it was assigned or inspected in
+        { id: "yr", label: "Year",
+          options: () => [...new Set([...App.yearsWithData(), ...Store.all("workOrder").flatMap(w => [U.yearOf(w.dateAssigned), U.yearOf(w.inspectionDate)]).filter(Boolean)])].sort((a, b) => b - a),
+          apply: (w, v) => U.yearOf(w.dateAssigned) === Number(v) || U.yearOf(w.inspectionDate) === Number(v) },
         { id: "state", label: "State",
           options: () => [...new Set(Store.all("workOrder").map(w => w.workState).filter(Boolean))].sort()
             .map(c => ({ value: c, label: `${c} — ${SCHEMA.stateName(c)}` })),
           apply: (w, v) => w.workState === v },
         { id: "jobType", label: "Job Type", options: SCHEMA.jobTypes, apply: (w, v) => w.jobType === v },
         { id: "flag", label: "Alert", options: [
+            { value: "pending", label: "Not yet invoiced (pending fees)" },
             { value: "unbilled", label: "Submitted, not invoiced" },
             { value: "overdue", label: "Report overdue" },
             { value: "nomiles", label: "Missing mileage" },
+            { value: "notrip", label: "Trip done, no mileage logged" },
             { value: "travel", label: "Travel: mileage or expenses?" },
           ],
           apply: (w, v) => {
+            if (v === "pending") return WO.isPendingInvoice(w);
+            if (v === "notrip") return WO.tripNotLogged(w);
             if (v === "unbilled") return w.status === "Submitted";
             const warns = WO.warnings(w);
             if (v === "overdue") return warns.some(x => x.key === "overdue");
@@ -1113,7 +1154,7 @@ Views.workorders = {
         { label: "⚠", html: w => WO.warnings(w).map(x => `<span title="${U.escapeHtml(x.text)}">${x.color === "red" ? "🔴" : "🟡"}</span>`).join("") || "", sortVal: w => WO.warnings(w).length },
         { label: "Go", html: w => goBtn(w), sortVal: w => WO.lossAddress(w) ? 0 : 1 },
       ],
-      defaultSort: { col: 5, dir: -1 },
+      defaultSort: { col: 7, dir: -1 },   // Assigned, newest first
       rowClass: w => WO.warnings(w).length ? "row-warn" : "",
       onRow: w => WO.openDetail(w),
       card: w => {

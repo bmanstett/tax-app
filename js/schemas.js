@@ -110,14 +110,26 @@ SCHEMA.stateName = code => {
   const hit = SCHEMA.usStates.find(([c]) => c === String(code || "").toUpperCase());
   return hit ? hit[1] : (code || "");
 };
-/** Pull a state code out of an address ("… Springfield, VA 22152" or "…, MD"). */
+SCHEMA._stateCodes = new Set(SCHEMA.usStates.map(([c]) => c));
+SCHEMA._stateNameRes = [...SCHEMA.usStates].sort((a, b) => b[1].length - a[1].length)   // longest first: "West Virginia" before "Virginia"
+  .map(([c, n]) => [c, new RegExp(`\\b${n.toUpperCase()}\\b`)]);
+SCHEMA._stateCodeRes = [
+  /,\s*([A-Z]{2})\s+\d{5}/,                    // "…, VA 22152"
+  /\b([A-Z]{2})\s+\d{5}(?:-\d{4})?\s*$/m,      // "… Washington DC 20007" — no comma before the state
+  /,\s*([A-Z]{2})\s*$/m,                       // "…, MD"
+];
+/** Pull a state code out of an address ("… Springfield, VA 22152", "… Washington DC 20007" or "…, MD").
+    The code by the ZIP is tried before any spelled-out name — a street or town named after a
+    state ("Wisconsin Ave NW, Washington DC", "Indiana PA", "California MD") used to win. */
 SCHEMA.stateFromAddress = address => {
   const s = String(address || "").toUpperCase();
-  const m = s.match(/,\s*([A-Z]{2})\s+\d{5}/) || s.match(/,\s*([A-Z]{2})\s*$/m);
-  if (m && SCHEMA.usStates.some(([c]) => c === m[1])) return m[1];
-  // fall back to a spelled-out name, longest first so "West Virginia" doesn't match "Virginia"
-  const named = [...SCHEMA.usStates].sort((a, b) => b[1].length - a[1].length)
-    .find(([, n]) => new RegExp(`\\b${n.toUpperCase()}\\b`).test(s));
+  for (const re of SCHEMA._stateCodeRes) {
+    const m = s.match(re);
+    if (m && SCHEMA._stateCodes.has(m[1])) return m[1];
+  }
+  // "Washington, D.C." / "Washington DC" with no ZIP — before the name search turns it into WA
+  if (/\bWASHINGTON,?\s+D\.?\s?C\b/.test(s)) return "DC";
+  const named = SCHEMA._stateNameRes.find(([, re]) => re.test(s));
   return named ? named[0] : "";
 };
 
@@ -171,6 +183,15 @@ SCHEMA.assetLikeCategories = ["Computer Equipment", "Engineering Tools", "Measur
 SCHEMA.assetCategories = ["Laptop / Computer", "Camera", "Drone", "Measuring Tools", "Moisture Meter",
   "Ladder", "Printer / Scanner", "Phone", "Office Furniture", "Software License", "Engineering Equipment",
   "Vehicle", "Other"];
+
+/* ---------- Form 1099-NEC reporting threshold, by the year the payments were made ----------
+   $600 through 2025; $2,000 for payments made in 2026 (P.L. 119-21 §70433); indexed after
+   that — $2,100 for 2027 (Rev. Proc. 2026-35). It decides who must send a form, not what
+   is income or what is deductible. */
+SCHEMA.nec1099Threshold = year => {
+  const y = Number(year) || new Date().getFullYear();
+  return y <= 2025 ? 600 : y === 2026 ? 2000 : 2100;
+};
 
 /* ---------- IRS quarterly estimated tax due dates (typical) ---------- */
 SCHEMA.quarterDueDates = year => ([
@@ -319,7 +340,7 @@ SCHEMA.fields.client = [
   F("remittanceInstructions", "Default Invoice / Remittance Instructions", "textarea", { span2: true }),
 
   F("_s3", "1099 / Tax", "section"),
-  F("expects1099", "1099 expected from this client", "checkbox", { hint: "Typically clients paying $600+/yr for services" }),
+  F("expects1099", "1099 expected from this client", "checkbox", { hint: "Clients paying you at or above the 1099-NEC threshold for the year ($600 through 2025, $2,000 for 2026)" }),
   F("w9Provided", "W-9 provided to this client", "checkbox"),
 
   F("_s4", "Notes", "section"),
@@ -358,7 +379,7 @@ SCHEMA.fields.invoice = [
           } else {
             const res = await WO.calcRouteMileageReimb(w);
             setValue("mileageReimb", res.amount);
-            hint(`${U.num(res.miles, 1)} mi round trip × $${res.rate.toFixed(2)}/mi = ${U.money(res.amount)} — edit if you made extra stops`);
+            hint(`${U.num(res.miles, 1)} mi round trip × ${Store.fmtRate(res.rate)}/mi = ${U.money(res.amount)} — edit if you made extra stops`);
           }
         } catch (e) { UI.toast(e.message, "error", 6000); }
         finally { btn.disabled = false; btn.textContent = "📍 Calculate from work order route"; }
@@ -563,7 +584,7 @@ SCHEMA.fields.contractor = [
   F("w9Received", "W-9 received", "checkbox"),
 
   F("_s2", "1099 Review", "section"),
-  F("may1099", "Possible 1099-NEC filing required", "checkbox", { hint: "Generally $600+ paid for services in a year — CPA review" }),
+  F("may1099", "Possible 1099-NEC filing required", "checkbox", { hint: "Paid at or above the year's threshold for services ($600 through 2025, $2,000 for 2026) — CPA review" }),
   F("cpaReview", "Flag for CPA review", "checkbox"),
 
   F("_s3", "Notes", "section"),

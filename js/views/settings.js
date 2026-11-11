@@ -15,7 +15,21 @@ Views.settings = {
     const live = () => Store.state.settings;
     const s = live();
     const rates = s.mileageRates || {};
-    const rateYears = Object.keys(rates).map(Number).sort((a, b) => b - a);
+    const ratesH2 = s.mileageRatesH2 || {};
+    // every year with a rate set, plus this year and last (shown at the published rate until one is saved)
+    const rateYears = [...new Set([...Object.keys(rates), ...Object.keys(ratesH2), s.taxYear, s.taxYear - 1].map(Number).filter(Boolean))].sort((a, b) => b - a);
+    const rateInp = "width:92px;padding:8px;border:1px solid var(--border-strong);border-radius:8px;background:var(--bg-elev);color:var(--text)";
+    const rateRowHtml = (y, r1, r2) => {
+      const irs = Store.IRS_MILEAGE[y];
+      return `<div style="display:flex;gap:8px;align-items:center;margin-bottom:7px;flex-wrap:wrap" data-rate-row="${y}">
+        <span style="width:44px;font-weight:700">${y}</span>
+        <input type="number" step="0.005" min="0" data-rate-year="${y}" value="${r1 ?? ""}" placeholder="${irs ? irs[0] : "0.70"}" style="${rateInp}" title="Rate for the year (or January–June)">
+        <span style="font-size:12px;color:var(--text-3)">$/mi</span>
+        <input type="number" step="0.005" min="0" data-rate-year-h2="${y}" value="${r2 ?? ""}" placeholder="${irs && irs[1] ? irs[1] : "—"}" style="${rateInp}" title="Rate from July 1 — only when the IRS changed it mid-year">
+        <span style="font-size:12px;color:var(--text-3)">from Jul 1</span>
+        ${irs ? `<span style="font-size:11.5px;color:var(--text-3)">IRS: ${irs.map(Store.fmtRate).join(" → ")}</span>` : ""}
+      </div>`;
+    };
 
     function peExpiryBadge(expires) {
       if (!expires) return "";
@@ -91,15 +105,11 @@ Views.settings = {
             </div>
             <div class="form-section-title" style="grid-column:auto">Standard mileage rate by tax year ($/mile)</div>
             <div id="st-rates">
-              ${rateYears.map(y => `
-                <div style="display:flex;gap:8px;align-items:center;margin-bottom:7px">
-                  <span style="width:56px;font-weight:700">${y}</span>
-                  <input type="number" step="0.005" data-rate-year="${y}" value="${rates[y]}" style="width:110px;padding:8px;border:1px solid var(--border-strong);border-radius:8px;background:var(--bg-elev);color:var(--text)">
-                  <span style="font-size:12px;color:var(--text-3)">$/mi</span>
-                </div>`).join("")}
+              ${rateYears.map(y => rateRowHtml(y, rates[y], ratesH2[y])).join("")}
             </div>
             <button class="btn btn-sm" id="st-add-rate" style="margin-bottom:10px">＋ Add year</button>
-            <div class="hint" style="font-size:11.5px;color:var(--text-3);margin-bottom:10px">Verify the current IRS standard mileage rate each January (irs.gov) and confirm with your CPA.</div>
+            <button class="btn btn-sm" id="st-irs-rates" style="margin-bottom:10px">Use the IRS rates</button>
+            <div class="hint" style="font-size:11.5px;color:var(--text-3);margin-bottom:10px">Leave a year blank to use the published IRS rate. The second box is only for a year the IRS changed the rate mid-year (2026: 72.5¢ through June, 76¢ from July 1) — trips are priced by their date. Check irs.gov each January and confirm with your CPA.</div>
             <button class="btn btn-primary" id="st-save-tax">Save tax assumptions</button>
           </div>
         </div>
@@ -290,11 +300,16 @@ Views.settings = {
     });
 
     g("#st-save-tax").addEventListener("click", () => {
-      const newRates = {};
+      const newRates = {}, newRatesH2 = {};
       el.querySelectorAll("[data-rate-year]").forEach(inp => {
         const y = Number(inp.getAttribute("data-rate-year"));
         const v = Number(inp.value);
         if (y && v > 0) newRates[y] = v;
+      });
+      el.querySelectorAll("[data-rate-year-h2]").forEach(inp => {
+        const y = Number(inp.getAttribute("data-rate-year-h2"));
+        const v = Number(inp.value);
+        if (y && v > 0) newRatesH2[y] = v;
       });
       const cur = live();
       Object.assign(cur, {
@@ -304,7 +319,8 @@ Views.settings = {
         stateReservePct: Number(g("#st-state").value) || 0,
         largeExpenseThreshold: Number(g("#st-large").value) || 2500,
         backupReminderDays: Number(g("#st-bakdays").value) || 14,
-        mileageRates: Object.keys(newRates).length ? newRates : cur.mileageRates,
+        mileageRates: newRates,       // a blank year falls back to the published IRS rate
+        mileageRatesH2: newRatesH2,
       });
       Store.logAudit("updated", "settings", { id: "assumptions" }, [{ field: "taxAssumptions", from: "", to: "updated" }]);
       Store.markSettingsChanged(); UI.toast("Tax assumptions saved", "success"); App.rerender();
@@ -314,12 +330,20 @@ Views.settings = {
       const y = prompt("Tax year for the new rate (e.g. " + (s.taxYear + 1) + "):", String(s.taxYear + 1));
       const yr = Number(y);
       if (!yr || yr < 2000 || yr > 2100) return;
-      el.querySelector("#st-rates").insertAdjacentHTML("beforeend", `
-        <div style="display:flex;gap:8px;align-items:center;margin-bottom:7px">
-          <span style="width:56px;font-weight:700">${yr}</span>
-          <input type="number" step="0.005" data-rate-year="${yr}" value="0.70" style="width:110px;padding:8px;border:1px solid var(--border-strong);border-radius:8px;background:var(--bg-elev);color:var(--text)">
-          <span style="font-size:12px;color:var(--text-3)">$/mi</span>
-        </div>`);
+      if (el.querySelector(`[data-rate-row="${yr}"]`)) return;   // already listed
+      el.querySelector("#st-rates").insertAdjacentHTML("beforeend", rateRowHtml(yr, "", ""));
+    });
+    // fill every listed year the IRS has published — still needs "Save tax assumptions"
+    g("#st-irs-rates").addEventListener("click", () => {
+      let n = 0;
+      el.querySelectorAll("[data-rate-row]").forEach(row => {
+        const irs = Store.IRS_MILEAGE[Number(row.getAttribute("data-rate-row"))];
+        if (!irs) return;
+        row.querySelector("[data-rate-year]").value = irs[0];
+        row.querySelector("[data-rate-year-h2]").value = irs[1] || "";
+        n++;
+      });
+      UI.toast(n ? "IRS rates filled in — tap “Save tax assumptions” to keep them" : "No published rate on file for these years", n ? "success" : "default", 4500);
     });
 
     /* ---- sync ---- */
@@ -329,6 +353,13 @@ Views.settings = {
       const repo = g("#st-sync-repo").value.trim();
       if (!token) { UI.toast("Paste the access token first", "error"); return; }
       if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) { UI.toast("Repository should look like owner/name", "error"); return; }
+      // demo data on a device that has never synced would be merged into the real books everywhere
+      if (Store.state.demoDataLoaded && !Sync.config.lastSyncAt) {
+        const go = await UI.confirm("Demo data is on this device",
+          "Turning sync on now merges the sample clients, work orders, income, expenses and tax payments into your real books on every device, and replaces your real home-office numbers with the sample ones. Clear it first: Demo data → <strong>Clear ALL data</strong>, then turn sync on.",
+          { danger: true, confirmLabel: "Sync the demo data anyway" });
+        if (!go) return;
+      }
       syncEnable.disabled = true; syncEnable.textContent = "Connecting…";
       try {
         await Sync.enable(repo, token);
@@ -374,14 +405,16 @@ Views.settings = {
       try { parsed = JSON.parse(text); errs = Store.validateImport(parsed); } catch (err) { errs = ["Invalid JSON: " + err.message]; }
       if (errs.length) { UI.toast("Import blocked: " + errs[0], "error", 6000); e.target.value = ""; return; }
       const counts = parsed.data || parsed;
+      const syncOn = Sync.config.enabled;
       const ok = await UI.confirm("Restore from backup?",
         `This <strong>replaces all current data</strong> with the backup${parsed.exportedAt ? ` from <strong>${U.fmtDateTime(parsed.exportedAt)}</strong>` : ""}: ` +
-        `${(counts.workOrders || []).length} work orders, ${(counts.invoices || []).length} invoices, ${(counts.expenses || []).length} expenses, ${(counts.income || []).length} income entries, ${(counts.mileage || []).length} trips. This cannot be undone.`,
+        `${(counts.workOrders || []).length} work orders, ${(counts.invoices || []).length} invoices, ${(counts.expenses || []).length} expenses, ${(counts.income || []).length} income entries, ${(counts.mileage || []).length} trips. This cannot be undone.` +
+        (syncOn ? "<br><br><strong>Sync is on:</strong> the restored records also replace the copies on your other devices. Records added after this backup are kept." : ""),
         { danger: true, confirmLabel: "Replace my data", requireText: "RESTORE" });
       e.target.value = "";
       if (!ok) return;
       try {
-        await Store.importJSON(text);
+        await Store.importJSON(text, { asNewest: syncOn });
         UI.toast("Backup restored ✓", "success");
         UI.clearListState();   // old filters would point at records that are gone
         WO.reseedArrivals();   // and the restored jobs aren't "new arrivals" to be asked about
@@ -417,22 +450,23 @@ Views.settings = {
       }
       const todo = Store.all("workOrder").filter(w => !w.workState && String(w.lossLocation || "").trim());
       let filled = 0;
-      const unreadable = [];
+      const unreadable = [], lockedOut = [];
       todo.forEach(w => {
+        const name = w.woNumber || w.projectNumber || "(unnumbered)";
         const code = SCHEMA.stateFromAddress(w.lossLocation);
-        if (!code) { unreadable.push(w.woNumber || w.projectNumber || "(unnumbered)"); return; }
-        Store.update("workOrder", w.id, {
+        if (!code) { unreadable.push(name); return; }
+        if (Store.update("workOrder", w.id, {
           workState: code,
           officeState: w.officeState || cur.officeState,
           fieldWorkPct: w.fieldWorkPct == null || w.fieldWorkPct === "" ? (cur.defaultFieldWorkPct ?? 50) : w.fieldWorkPct,
-        });
-        filled++;
+        })) filled++; else lockedOut.push(name);
       });
       g("#st-health-out").innerHTML =
         `<div style="font-size:13px;font-weight:700;color:${filled ? "var(--green)" : "var(--text-2)"}">${filled
           ? `✓ Set the field state on ${filled} work order${filled > 1 ? "s" : ""} from their loss-location addresses. Linked income now sources to the right state.`
           : todo.length ? "No states could be read from the remaining loss-location addresses." : "Every work order with a loss location already has a field state."}</div>` +
         (unreadable.length ? `<div class="hint" style="font-size:12px;color:var(--amber);margin-top:5px">No state found in the address for: ${U.escapeHtml(unreadable.slice(0, 12).join(", "))}${unreadable.length > 12 ? ` and ${unreadable.length - 12} more` : ""} — set those by hand on each work order.</div>` : "") +
+        (lockedOut.length ? `<div class="hint" style="font-size:12px;color:var(--amber);margin-top:5px">In a locked tax year, left unchanged: ${U.escapeHtml(lockedOut.slice(0, 12).join(", "))}${lockedOut.length > 12 ? ` and ${lockedOut.length - 12} more` : ""} — unlock the year on the Taxes page to set them.</div>` : "") +
         `<div class="hint" style="font-size:12px;color:var(--text-3);margin-top:5px">Review each job afterwards: this reads the address only, so a job you inspected somewhere other than the loss address needs a manual fix.</div>`;
       if (filled) { UI.toast(`Set the work state on ${filled} work order${filled > 1 ? "s" : ""}`, "success"); App.refreshNav(); }
     });
@@ -528,9 +562,15 @@ Views.settings = {
     if (demoBtn) demoBtn.addEventListener("click", () => { Demo.load(); UI.clearListState(); WO.reseedArrivals(); UI.toast("Demo data loaded — explore!", "success"); App.go("dashboard"); });
     g("#st-reset").addEventListener("click", async () => {
       const ok = await UI.confirm("Erase everything?",
-        "This permanently deletes <strong>all</strong> clients, work orders, invoices, income, expenses, mileage, receipts, assets, contractors, tax data, settings, and the audit log from this browser. Export a backup first!",
+        "This permanently deletes <strong>all</strong> clients, work orders, invoices, income, expenses, mileage, receipts, assets, contractors, tax data, settings, and the audit log from this browser. Export a backup first!" +
+        (Sync.config.enabled ? "<br><br><strong>Sync is on.</strong> This erases this device only and turns sync off here — otherwise the next sync would pull everything straight back. Your other devices and the private data repo keep their copy. You'll need your GitHub token to turn sync back on." : ""),
         { danger: true, confirmLabel: "Erase all data", requireText: "DELETE" });
-      if (ok) { Store.resetAll(); UI.clearListState(); WO.reseedArrivals(); UI.toast("All data cleared"); App.go("dashboard"); }
+      if (!ok) return;
+      const syncWasOn = Sync.config.enabled;
+      if (syncWasOn) Sync.disable();   // first: resetAll() fires the save listeners that schedule a sync
+      Store.resetAll(); UI.clearListState(); WO.reseedArrivals();
+      UI.toast(syncWasOn ? "This device cleared — sync turned off here" : "All data cleared");
+      App.go("dashboard");
     });
   },
 };
@@ -541,8 +581,8 @@ Views.settings = {
 Views.audit = {
   title: "Audit Trail",
   render(el) {
-    const log = Store.state.auditLog;
-    const types = [...new Set(log.map(a => a.recordType))];
+    const log = () => Store.state.auditLog;   // read live — a sync swaps the whole state object
+    const types = [...new Set(log().map(a => a.recordType))];
     let filterType = "", q = "", shown = 100;
 
     el.innerHTML = UI.pageHeader("Audit Trail",
@@ -554,10 +594,11 @@ Views.audit = {
       </div>
       <div class="card" id="au-list"></div>`;
 
+    const txt = v => v == null || (Array.isArray(v) && !v.length) ? "" : typeof v === "object" ? JSON.stringify(v) : String(v);
     const actionBadge = a => a === "created" ? UI.badge("Created", "green") : a === "deleted" ? UI.badge("Deleted", "red") : a === "imported" ? UI.badge("Imported", "purple") : UI.badge("Updated", "blue");
 
     function render() {
-      let rows = log;
+      let rows = log();
       if (filterType) rows = rows.filter(a => a.recordType === filterType);
       if (q) {
         const qq = q.toLowerCase();
@@ -571,7 +612,7 @@ Views.audit = {
             <span class="au-when">${U.fmtDateTime(a.at)}</span>
           </div>
           ${a.changes && a.changes.length ? `<div class="au-changes">${a.changes.slice(0, 8).map(c => `
-            <span class="chg"><strong>${U.escapeHtml(c.field)}</strong>: <span class="old">${U.escapeHtml(U.truncate(String(c.from ?? ""), 42)) || "(empty)"}</span> → <span class="new">${U.escapeHtml(U.truncate(String(c.to ?? ""), 42)) || "(empty)"}</span></span>`).join("")}
+            <span class="chg"><strong>${U.escapeHtml(c.field)}</strong>: <span class="old">${U.escapeHtml(U.truncate(txt(c.from), 42)) || "(empty)"}</span> → <span class="new">${U.escapeHtml(U.truncate(txt(c.to), 42)) || "(empty)"}</span></span>`).join("")}
             ${a.changes.length > 8 ? `<span class="chg" style="color:var(--text-3)">…and ${a.changes.length - 8} more field(s)</span>` : ""}</div>` : ""}
         </div>`).join("") + (rows.length > shown ? `<button class="btn btn-sm" id="au-more" style="margin-top:10px">Show more (${rows.length - shown} remaining)</button>` : "")
         : UI.emptyState({ icon: "📜", title: "No audit entries yet", sub: "Every change you make is recorded here automatically." });
@@ -583,11 +624,11 @@ Views.audit = {
     el.querySelector("#au-q").addEventListener("input", U.debounce(e => { q = e.target.value; shown = 100; render(); }, 200));
     el.querySelector("#au-type").addEventListener("change", e => { filterType = e.target.value; shown = 100; render(); });
     el.querySelector("#au-export").addEventListener("click", () => {
-      const csv = U.toCSV(log, [
+      const csv = U.toCSV(log(), [
         { key: "at", label: "Timestamp" }, { key: "action", label: "Action" },
         { key: "recordType", label: "Record Type" }, { key: "recordId", label: "Record ID" },
         { key: "recordLabel", label: "Record" },
-        { label: "Changes", value: a => (a.changes || []).map(c => `${c.field}: "${c.from}" -> "${c.to}"`).join("; ") },
+        { label: "Changes", value: a => (a.changes || []).map(c => `${c.field}: "${txt(c.from)}" -> "${txt(c.to)}"`).join("; ") },
       ]);
       U.download("audit-trail.csv", csv, "text/csv");
       UI.toast("Audit log exported", "success");

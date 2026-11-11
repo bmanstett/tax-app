@@ -34,7 +34,8 @@ const Store = (() => {
       seTaxRatePct: 15.3,          // self-employment tax rate applied to 92.35% of net
       federalReservePct: 15,       // federal income tax reserve % of net profit
       stateReservePct: 4,          // state income tax reserve % of net profit
-      mileageRates: { [y - 1]: 0.70, [y]: 0.70 },  // $/mile by tax year — confirm current IRS rate
+      mileageRates: {},            // $/mile by tax year — blank years use the published IRS rate (see IRS_MILEAGE)
+      mileageRatesH2: {},          // $/mile from July 1, for years the IRS changed the rate mid-year
       largeExpenseThreshold: 2500, // flag for review above this
       backupReminderDays: 14,
       lastBackupAt: null,
@@ -79,7 +80,38 @@ const Store = (() => {
   let state = null;
   let saveListeners = [];
 
+  /* ---------- derived-data cache ----------
+     `rev` counts changes. Every write path ends in save() or swaps the whole state,
+     and each of those bumps it — so anything worked out purely from the records (the
+     lookup tables below, a year's slice, its tax summary) can be kept until the next
+     bump. A page that asks the same question for every row it draws now gets it
+     answered once, instead of re-scanning every collection each time. */
+  let rev = 0;
+  let cacheRev = -1, cacheState = null, cache = new Map();
+  function cached(key, fn) {
+    if (cacheRev !== rev || cacheState !== state) { cache = new Map(); cacheRev = rev; cacheState = state; }
+    if (cache.has(key)) return cache.get(key);
+    const v = fn();
+    cache.set(key, v);
+    return v;
+  }
+
+  /* The same, for answers that also lean on things outside the records — today's date,
+     a dialog that's mid-save. Those are kept only until the current burst of work is
+     over: the page that asks five times while it draws gets one computation, and the
+     next tap starts clean. */
+  let turnRev = -1, turnState = null, turnCache = new Map(), turnTimer = 0;
+  function cachedTurn(key, fn) {
+    if (turnRev !== rev || turnState !== state) { turnCache = new Map(); turnRev = rev; turnState = state; }
+    if (turnCache.has(key)) return turnCache.get(key);
+    if (!turnTimer) turnTimer = setTimeout(() => { turnTimer = 0; turnCache = new Map(); }, 0);
+    const v = fn();
+    turnCache.set(key, v);
+    return v;
+  }
+
   function load() {
+    rev++;
     try {
       const rawStr = localStorage.getItem(LS_KEY);
       if (!rawStr) { state = defaultState(); return state; }
@@ -114,11 +146,13 @@ const Store = (() => {
       saveListeners.forEach(fn => fn(new Date()));
     } catch (e) {
       console.error("Save failed:", e);
-      if (window.UI) UI.toast("⚠️ Save failed — storage may be full. Export a backup now.", "error", 6000);
+      // (UI is a top-level const, not a property of window — `window.UI` was always undefined,
+      // so this warning never showed and a full disk failed silently)
+      if (typeof UI !== "undefined") UI.toast("⚠️ Save failed — storage may be full. Export a backup now.", "error", 6000);
     }
   }, 150);
 
-  function save() { persist(); }
+  function save() { rev++; persist(); }
   function onSave(fn) { saveListeners.push(fn); }
 
   /* ---------- year lock ---------- */
@@ -132,13 +166,19 @@ const Store = (() => {
     const y = recordYear(rec);
     return !!(y && isYearLocked(y));
   }
+  let lockToastAt = 0;
   function lockGuard(rec) {
     const y = recordYear(rec);
-    if (y && isYearLocked(y)) {
-      if (window.UI) UI.toast(`Tax year ${y} is locked. Unlock it in Settings to edit.`, "error", 5000);
-      return true;
+    if (!(y && isYearLocked(y))) return false;
+    // Say so only while a form or dialog is open — the user's own edit was just refused.
+    // Background passes reach locked records too (the tidy-up after a sync; Ledger re-linking
+    // a moved job folder on every scan) and must stay quiet, or the toast returns every pass.
+    const dlg = document.getElementById("modal-root");
+    if (typeof UI !== "undefined" && dlg && dlg.children.length && Date.now() - lockToastAt > 4000) {
+      lockToastAt = Date.now();
+      UI.toast(`Tax year ${y} is locked. Unlock it on the Taxes page to edit.`, "error", 5000);
     }
-    return false;
+    return true;
   }
 
   /* ---------- audit trail ---------- */
@@ -206,8 +246,34 @@ const Store = (() => {
     return true;
   }
 
-  function get(type, id) { return coll(type).find(r => r.id === id) || null; }
+  /** One record by id — off a lookup table rebuilt only when something changes. */
+  function get(type, id) {
+    if (id == null || id === "") return null;
+    return cached("id:" + type, () => {
+      const m = new Map();
+      for (const r of coll(type)) if (!m.has(r.id)) m.set(r.id, r);   // first one wins, as find() did
+      return m;
+    }).get(id) || null;
+  }
   function all(type) { return coll(type); }
+
+  /** Every record of a type that points at `id` through `field`, in list order —
+      linkedTo("invoice", "workOrderId", w.id) → that job's invoices. The arrays are
+      shared with the cache: read them, never change them. */
+  const NO_RECORDS = Object.freeze([]);
+  function linkedTo(type, field, id) {
+    if (id == null || id === "") return NO_RECORDS;
+    return cached(`by:${type}.${field}`, () => {
+      const m = new Map();
+      for (const r of coll(type)) {
+        const k = r[field];
+        if (k == null || k === "") continue;
+        const list = m.get(k);
+        if (list) list.push(r); else m.set(k, [r]);
+      }
+      return m;
+    }).get(id) || NO_RECORDS;
+  }
 
   /* ---------- lookups ---------- */
   const clientName = id => (get("client", id) || {}).name || "";
@@ -227,16 +293,83 @@ const Store = (() => {
       inv.dueDate && U.daysFromToday(inv.dueDate) < 0 && invoiceBalance(inv) > 0.005;
   }
 
-  /* ---------- mileage math ---------- */
+  /* ---------- mileage math ----------
+     The IRS standard mileage rates, $ per mile, as published. A year normally has one;
+     when the IRS changes it mid-year (2011, 2022, 2026) the second figure applies to
+     trips from July 1. Settings can override any year (mileageRates = the whole year or
+     January–June; mileageRatesH2 = from July 1). A year with nothing in Settings uses
+     these — and Settings is checked against them, so a stale rate doesn't quietly
+     under-deduct every mile. Add each new year's rate here when the IRS announces it. */
+  const IRS_MILEAGE = {
+    2022: [0.585, 0.625], 2023: [0.655], 2024: [0.67], 2025: [0.70],
+    2026: [0.725, 0.76],   // Notice 2026-10; Announcement 2026-11 (76¢ from July 1, 2026)
+  };
+
+  /** The rate for a year — for a split year, the January–June one. */
   function mileageRate(year) {
     const rates = state.settings.mileageRates || {};
-    if (rates[year] != null) return Number(rates[year]);
+    if (rates[year] != null && Number(rates[year]) > 0) return Number(rates[year]);
+    if (IRS_MILEAGE[year]) return IRS_MILEAGE[year][0];
+    // a year nothing is known about yet: the most recent rate in effect before it
+    const known = [...new Set([...Object.keys(rates), ...Object.keys(IRS_MILEAGE)].map(Number))]
+      .filter(y => y < Number(year) && (IRS_MILEAGE[y] || Number(rates[y]) > 0)).sort((a, b) => b - a);
+    if (known.length) return mileageRateH2(known[0]) ?? mileageRate(known[0]);
     const ys = Object.keys(rates).map(Number).sort((a, b) => b - a);
     return ys.length ? Number(rates[ys[0]]) : 0.70;
   }
+  /** The rate from July 1 of a year, if it has one (set in Settings, or published for a
+      year Settings says nothing about) — else null. */
+  function mileageRateH2(year) {
+    const h2 = state.settings.mileageRatesH2 || {};
+    if (h2[year] != null && Number(h2[year]) > 0) return Number(h2[year]);
+    const rates = state.settings.mileageRates || {};
+    const set = rates[year] != null && Number(rates[year]) > 0;
+    return !set && IRS_MILEAGE[year] && IRS_MILEAGE[year][1] ? IRS_MILEAGE[year][1] : null;
+  }
+  /** The rate that applies to a trip on a given day. */
+  function mileageRateOn(iso) {
+    const y = U.yearOf(iso) || state.settings.taxYear;
+    const h2 = mileageRateH2(y);
+    return h2 != null && Number(String(iso || "").slice(5, 7)) >= 7 ? h2 : mileageRate(y);
+  }
+  /** "$0.70" · "$0.725" — as many decimals as the rate has (half-cents are real). */
+  const fmtRate = r => "$" + (Math.round(Number(r) * 1000) % 10 ? Number(r).toFixed(3) : Number(r).toFixed(2));
+  /** A year's rate for display: "$0.70/mi", or "$0.725/mi Jan–Jun · $0.76/mi Jul–Dec". */
+  function mileageRateText(year) {
+    const h2 = mileageRateH2(year);
+    return h2 != null && h2 !== mileageRate(year)
+      ? `${fmtRate(mileageRate(year))}/mi Jan–Jun · ${fmtRate(h2)}/mi Jul–Dec`
+      : `${fmtRate(mileageRate(year))}/mi`;
+  }
+  /** How a year's configured rate compares with the published one.
+      → {known, matches, irs: [h1, h2|null], set: [h1, h2|null], extra} where extra is the
+      deduction this year's logged trips would gain (or lose, if negative) at the IRS rates. */
+  function mileageRateCheck(year) {
+    year = Number(year);
+    const irs = IRS_MILEAGE[year];
+    const set = [mileageRate(year), mileageRateH2(year)];
+    if (!irs) return { known: false, matches: true, irs: null, set, extra: 0 };
+    const irsOn = iso => (irs[1] && Number(String(iso || "").slice(5, 7)) >= 7 ? irs[1] : irs[0]);
+    const trips = yearData(year).mileage;
+    const extra = U.round2(U.sum(trips, t => (Number(t.miles) || 0) * (irsOn(t.date) - mileageRateOn(t.date))));
+    const same = Math.abs(set[0] - irs[0]) < 0.0005 && Math.abs((set[1] ?? set[0]) - (irs[1] ?? irs[0])) < 0.0005;
+    return { known: true, matches: same, irs: [irs[0], irs[1] || null], set, extra };
+  }
+  /** Put the published rates into Settings for a year (one tap from the Tax Savings page). */
+  function useIrsMileageRates(year) {
+    const irs = IRS_MILEAGE[Number(year)];
+    if (!irs) return false;
+    const s = state.settings;
+    s.mileageRates = { ...(s.mileageRates || {}), [year]: irs[0] };
+    const h2 = { ...(s.mileageRatesH2 || {}) };
+    if (irs[1]) h2[year] = irs[1]; else delete h2[year];
+    s.mileageRatesH2 = h2;
+    logAudit("updated", "settings", { id: "assumptions" }, [{ field: `mileageRate${year}`, from: "", to: irs.join(" / ") }]);
+    markSettingsChanged();
+    return true;
+  }
   function tripDeduction(trip) {
-    const y = U.yearOf(trip.date) || state.settings.taxYear;
-    return U.round2((Number(trip.miles) || 0) * mileageRate(y));
+    return U.round2((Number(trip.miles) || 0) * mileageRateOn(trip.date || `${state.settings.taxYear}-01-01`));
   }
 
   /* ---------- expense math ---------- */
@@ -250,9 +383,12 @@ const Store = (() => {
 
   /* ---------- year filters ---------- */
   const inYear = (iso, y) => U.yearOf(iso) === Number(y);
+  /** One tax year's slice of every collection. Worked out once per change and shared
+      by everything that asks — treat it as read-only (filter/map it, never sort or
+      push in place). */
   function yearData(y) {
     y = Number(y);
-    return {
+    return cached("year:" + y, () => ({
       income: state.income.filter(r => inYear(r.date, y)),
       expenses: state.expenses.filter(r => inYear(r.date, y)),
       mileage: state.mileage.filter(r => inYear(r.date, y)),
@@ -260,12 +396,15 @@ const Store = (() => {
       assets: state.assets.filter(r => inYear(r.purchaseDate, y)),
       taxPayments: state.taxPayments.filter(r => Number(r.taxYear) === y),
       workOrders: state.workOrders.filter(r => inYear(r.dateAssigned, y) || inYear(r.inspectionDate, y)),
-    };
+    }));
   }
 
   /* ---------- tax estimates (organizer-level, CPA confirms) ---------- */
   function taxSummary(y) {
     y = Number(y);
+    return cached("tax:" + y, () => computeTaxSummary(y));
+  }
+  function computeTaxSummary(y) {
     const d = yearData(y);
     const s = state.settings;
     const grossIncome = U.sum(d.income, r => r.amount);
@@ -282,7 +421,7 @@ const Store = (() => {
       year: y, grossIncome, deductibleExpenses, mileageDeduction, netProfit,
       seTax, fedReserve, stateReserve, totalReserve,
       taxPaymentsMade: paid, reserveRemaining: U.round2(totalReserve - paid),
-      mileageMiles: U.sum(d.mileage, r => r.miles), mileageRate: mileageRate(y),
+      mileageMiles: U.sum(d.mileage, r => r.miles), mileageRate: mileageRate(y), mileageRateText: mileageRateText(y),
     };
   }
 
@@ -414,6 +553,9 @@ const Store = (() => {
     const live = new Set([...state.expenses, ...state.income, ...state.mileage, ...state.invoices, ...state.workOrders].map(r => r.id));
     const keep = (state.dupeIgnores || []).filter(k => k !== pairKey && k.split("~").every(id => live.has(id)));
     state.dupeIgnores = on ? [...keep, pairKey] : keep;
+    // noted in the audit trail, which is how sync tells a later "undo" from a pair the other
+    // device simply hasn't reviewed yet
+    logAudit("updated", "settings", { id: "dupeReview" }, [{ field: on ? "keptBoth" : "undidKeptBoth", from: "", to: pairKey }]);
     save();
   }
 
@@ -491,7 +633,11 @@ const Store = (() => {
     return errors;
   }
 
-  async function importJSON(text) {
+  /** asNewest: sync is on. Left as they are, restored records lose the merge that follows —
+      the repo's copies are newer, and its tombstones delete what the backup brings back — so
+      the restore would quietly undo itself a second later. They are stamped as edited now,
+      in the same tick as the swap, so no sync pass can ever see them unstamped. */
+  async function importJSON(text, { asNewest = false } = {}) {
     let obj;
     try { obj = JSON.parse(text); }
     catch (e) { throw new Error("Invalid JSON file: " + e.message); }
@@ -499,6 +645,15 @@ const Store = (() => {
     if (errors.length) throw new Error(errors.join(" "));
     const data = obj.data || obj;
     state = migrate(data);
+    if (asNewest) {
+      const now = U.nowISO();
+      for (const k of ["clients", "workOrders", "invoices", "income", "expenses", "mileage",
+        "receipts", "assets", "contractors", "taxPayments", "form1099s"])   // the collections sync merges
+        for (const r of (state[k] || [])) r.updatedAt = now;
+      state.settingsUpdatedAt = now;
+      state.homeOffice.updatedAt = now;
+    }
+    rev++;
     logAudit("imported", "settings", { id: "backup" }, [{ field: "restore", from: "", to: obj.exportedAt || "unknown export date" }]);
     localStorage.setItem(LS_KEY, JSON.stringify(state)); // immediate, not debounced
     if (Array.isArray(obj.attachments) && obj.attachments.length) {
@@ -512,13 +667,22 @@ const Store = (() => {
   /** Replace state with a synced/merged snapshot (persists immediately, no audit entry). */
   function applySynced(next) {
     state = migrate(next);
-    localStorage.setItem(LS_KEY, JSON.stringify(state));
-    saveListeners.forEach(fn => fn(new Date()));
+    rev++;
+    // a full disk must not abort the sync pass before it has pushed this device's edits
+    let stored = true;
+    try { localStorage.setItem(LS_KEY, JSON.stringify(state)); }
+    catch (e) {
+      stored = false;
+      console.error("Save failed:", e);
+      if (typeof UI !== "undefined") UI.toast("⚠️ Save failed — storage may be full. Export a backup now.", "error", 6000);
+    }
+    if (stored) saveListeners.forEach(fn => fn(new Date()));
     return state;
   }
 
   function resetAll() {
     state = defaultState();
+    rev++;
     localStorage.setItem(LS_KEY, JSON.stringify(state));
     Attachments.clearAll().catch(() => {});
     saveListeners.forEach(fn => fn(new Date()));
@@ -529,7 +693,13 @@ const Store = (() => {
     if (!s.lastBackupAt) return state.auditLog.length > 5; // only nag once they have data
     return U.daysBetween(s.lastBackupAt.slice(0, 10), U.todayISO()) >= (s.backupReminderDays || 14);
   }
-  function markBackedUp() { state.settings.lastBackupAt = U.nowISO(); save(); }
+  function markBackedUp() {
+    state.settings.lastBackupAt = U.nowISO();
+    // A backup is a settings change the other device should see (its reminder clears too) —
+    // but a device that has never owned a stamp (fresh, not yet joined to the sync repo)
+    // must not claim the whole profile just by exporting.
+    if (state.settingsUpdatedAt) markSettingsChanged(); else save();
+  }
 
   /** Stamp settings as edited on this device *now*, then persist. Multi-device
       sync compares settingsUpdatedAt to decide whose profile wins, so this
@@ -621,10 +791,13 @@ const Store = (() => {
   return {
     load, save, onSave, defaultSettings,
     get state() { return state; },
-    add, update, remove, get, all,
+    get rev() { return rev; },
+    cached, cachedTurn,
+    add, update, remove, get, all, linkedTo,
     clientName, woLabel, invLabel,
     invoiceTotal, invoiceBalance, invoiceIsOverdue,
-    mileageRate, tripDeduction, expenseDeductibleAmt,
+    mileageRate, mileageRateH2, mileageRateOn, mileageRateText, mileageRateCheck, useIrsMileageRates, fmtRate, IRS_MILEAGE,
+    tripDeduction, expenseDeductibleAmt,
     yearData, taxSummary,
     incomeWorkOrder, incomeStateSource, incomeStateSplit, stateIncomeSummary,
     findDuplicates, setDuplicateIgnored, statusChangedAt, integrityCheck,

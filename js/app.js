@@ -26,6 +26,7 @@ const App = (() => {
       { route: "homeoffice", icon: "🏠", label: "Home Office" },
       { route: "contractors", icon: "👷", label: "Contractors" },
       { route: "taxes", icon: "🏛️", label: "Taxes" },
+      { route: "taxsavings", icon: "💡", label: "Tax Savings" },
     ]},
     { group: "Records", items: [
       { route: "reports", icon: "📦", label: "Reports & Exports" },
@@ -56,13 +57,15 @@ const App = (() => {
   }
 
   /* ---------- routing ---------- */
-  /** Show a page. freshLists: a deep link (a dashboard item, "see the new invoice") —
-      its lists open unfiltered, so a filter left from earlier can't hide what it's for. */
-  function go(route, { freshLists = false } = {}) {
+  /** Show a page. freshLists: a deep link (a dashboard tile, "see the new invoice") —
+      filters left from earlier are dropped so they can't hide what the link is for.
+      lists: the filters the link wants instead, keyed by list ({"wo-list": {filters: {…}}}),
+      so the page opens on exactly the records the tile was counting. */
+  function go(route, { freshLists = false, lists = null } = {}) {
     if (!Views[route]) route = "dashboard";
     currentRoute = route;
     if (location.hash !== "#/" + route) history.replaceState(null, "", "#/" + route);
-    if (freshLists) UI.withFreshLists(() => render()); else render();
+    if (freshLists || lists) UI.withFreshLists(() => render(), lists); else render();
   }
 
   /** Draw the current page. keepScroll: it's the same page with fresh data (a record
@@ -161,7 +164,7 @@ const App = (() => {
         { icon: "🛣️", label: "Mileage (full)", action: () => Mileage.openEditor(null) },
         { icon: "📋", label: "Work order", action: () => WO.openEditor(null) },
         { icon: "📄", label: "Import WO PDF", action: () => ImportWO.openImportModal() },
-        { icon: "🧾", label: "Invoice", action: () => Invoices.openEditor(null, { invoiceNumber: `INV-${viewYear()}-${String(Store.all("invoice").length + 1).padStart(3, "0")}` }) },
+        { icon: "🧾", label: "Invoice", action: () => Invoices.openEditor(null, { invoiceNumber: Invoices.nextNumber(viewYear()) }) },
         { icon: "💵", label: "Income / payment", action: () => Income.openEditor(null) },
         { icon: "📎", label: "Receipt / document", action: () => Receipts.openEditor(null) },
         { icon: "🏛️", label: "Tax payment", action: () => Taxes.addPayment() },
@@ -171,8 +174,16 @@ const App = (() => {
   }
 
   /* ---------- theme ---------- */
-  function setTheme(t) {
+  const THEME_KEY = "anstett_theme";   // a tiny copy index.html can read before anything loads
+  function applyTheme(t) {
     document.documentElement.setAttribute("data-theme", t);
+    try { localStorage.setItem(THEME_KEY, t); } catch (e) { /* private mode — no matter */ }
+  }
+  /** Apply a theme; the books are only re-saved when it actually changed (this used to
+      rewrite every record to storage — and kick off a sync — on each launch). */
+  function setTheme(t) {
+    applyTheme(t);
+    if (Store.state.settings.theme === t) return;
     Store.state.settings.theme = t;
     Store.save();
   }

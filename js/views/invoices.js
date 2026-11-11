@@ -108,7 +108,11 @@ const Invoices = (() => {
       onSave: vals => {
         // auto-derive Partial/Paid status from amounts if user left status stale
         const tot = Store.invoiceTotal(vals);
-        const paid = Number(vals.amountPaid) || 0;
+        let paid = Number(vals.amountPaid) || 0;
+        // "Paid" picked in the Status box with Amount Paid left blank means paid in full — what the
+        // Mark-paid button records. (It used to save a Paid invoice showing its whole balance still
+        // due, and never offered to log the income.)
+        if (vals.status === "Paid" && paid <= 0.005 && tot > 0) { vals.amountPaid = tot; paid = tot; }
         if (paid > 0.005 && paid < tot - 0.005 && ["Draft", "Sent", "Paid"].includes(vals.status)) vals.status = "Partial";
         if (tot > 0 && paid >= tot - 0.005 && vals.status !== "Written Off") vals.status = "Paid";
         // paid today unless the form says otherwise, and ACH unless a method was picked
@@ -140,9 +144,18 @@ const Invoices = (() => {
       monthly income / net-profit / P&L views land in the month the invoice was paid. */
   function syncIncomeDates(inv) {
     if (!inv || !inv.paymentDate) return 0;
+    const linked = [...Store.linkedTo("income", "invoiceId", inv.id)];
+    // Instalments keep the day each one arrived: more than one payment entry, or a lone entry
+    // smaller than the invoice (a part-payment logged before "Mark paid in full"). Moving them
+    // onto the final payment date would shift an earlier payment into another month — or
+    // another tax year.
+    const pay = linked.filter(i => i.category !== BONUS_CATEGORY);
+    if (pay.length > 1) return 0;
+    if (pay.length === 1 && (Number(pay[0].amount) || 0) < Store.invoiceTotal(inv) - 0.005) return 0;
     let n = 0;
-    Store.state.income.filter(i => i.invoiceId === inv.id).forEach(i => {
-      if (i.date !== inv.paymentDate) { Store.update("income", i.id, { date: inv.paymentDate }); n++; }
+    linked.forEach(i => {
+      // count only entries actually moved (Store.update refuses in a locked year)
+      if (i.date !== inv.paymentDate && Store.update("income", i.id, { date: inv.paymentDate })) n++;
     });
     return n;
   }
@@ -190,7 +203,7 @@ const Invoices = (() => {
 
   /** Derived, no-manual-work verification of an invoice against logged income. */
   function verifiedBadge(inv) {
-    const linked = Store.state.income.filter(r => r.invoiceId === inv.id);
+    const linked = Store.linkedTo("income", "invoiceId", inv.id);
     const nonBonus = U.sum(linked.filter(r => r.category !== BONUS_CATEGORY), r => r.amount);
     const bonus = Number(inv.bonusAmount) || 0;
     const bonusLogged = linked.some(r => r.category === BONUS_CATEGORY);
@@ -214,13 +227,29 @@ const Invoices = (() => {
     }
     const saved = Store.update("invoice", inv.id, patch);
     if (saved) { syncWorkOrder(saved); syncIncomeDates(saved); autoLogWorkOrderMileage(saved); }
-    if (status === "Paid" && saved && !Store.state.income.some(i => i.invoiceId === inv.id)) offerIncome(saved);
+    if (status === "Paid" && saved) {
+      // same test as the form: a bonus entry on its own doesn't mean the payment was logged
+      if (!Store.linkedTo("income", "invoiceId", inv.id).some(i => i.category !== BONUS_CATEGORY)) offerIncome(saved);
+      else offerBonusIncome(saved);
+    }
     UI.toast(`Marked ${status.toLowerCase()}`, "success");
     App.rerender();
   }
 
+  /** Next free INV-<year>-NNN: one past the count, as before, but stepping over any number
+      already on an invoice (after a deletion the count alone suggests one that's taken). */
+  function nextNumber(yr = App.viewYear()) {
+    const taken = new Set(Store.state.invoices.map(i => String(i.invoiceNumber || "").toLowerCase()));
+    let n = Store.state.invoices.length + 1, num;
+    do { num = `INV-${yr}-${String(n++).padStart(3, "0")}`; } while (taken.has(num.toLowerCase()));
+    return num;
+  }
+
+  /** Sent (or part-paid, or overdue) with money still owed — what "outstanding" counts everywhere. */
+  const isOutstanding = inv => ["Sent", "Partial", "Overdue"].includes(inv.status) && Store.invoiceBalance(inv) > 0.005;
+
   function agingBucket(inv) {
-    if (!["Sent", "Partial", "Overdue"].includes(inv.status) || Store.invoiceBalance(inv) <= 0.005) return null;
+    if (!isOutstanding(inv)) return null;
     const late = inv.dueDate ? -U.daysFromToday(inv.dueDate) : 0;
     return late <= 0 ? "Current" : late <= 30 ? "1–30" : late <= 60 ? "31–60" : late <= 90 ? "61–90" : "90+";
   }
@@ -344,7 +373,7 @@ const Invoices = (() => {
     });
   }
 
-  return { openEditor, openDetail, preview, markStatus, agingBucket, syncWorkOrder, verifiedBadge, offerBonusIncome, syncIncomeDates, autoLogWorkOrderMileage,
+  return { openEditor, openDetail, preview, markStatus, agingBucket, isOutstanding, nextNumber, syncWorkOrder, verifiedBadge, offerBonusIncome, syncIncomeDates, autoLogWorkOrderMileage,
     paymentDateGuess, paymentDefaults, applyPaymentDefaults, needingPaymentInfo, backfillPaymentInfo, DEFAULT_PAYMENT_METHOD };
 })();
 
@@ -352,13 +381,13 @@ Views.invoices = {
   title: "Invoices",
   render(el) {
     const S = Store.state;
-    const open = S.invoices.filter(i => ["Sent", "Partial", "Overdue"].includes(i.status) && Store.invoiceBalance(i) > 0.005);
+    const open = S.invoices.filter(Invoices.isOutstanding);
     const overdue = open.filter(Store.invoiceIsOverdue);
     const buckets = { "Current": 0, "1–30": 0, "31–60": 0, "61–90": 0, "90+": 0 };
     open.forEach(i => { const b = Invoices.agingBucket(i); if (b) buckets[b] += Store.invoiceBalance(i); });
     const yr = App.viewYear();
     const paidThisYear = S.invoices.filter(i => i.status === "Paid" && U.yearOf(i.paymentDate || i.invoiceDate) === yr);
-    const noIncomeLink = S.invoices.filter(i => i.status === "Paid" && !S.income.some(r => r.invoiceId === i.id));
+    const noIncomeLink = S.invoices.filter(i => i.status === "Paid" && !Store.linkedTo("income", "invoiceId", i.id).length);
 
     el.innerHTML = UI.pageHeader("Invoices & Payments", "Billing, aging, and payment reconciliation.",
       `<button class="btn btn-primary" id="inv-add">＋ New Invoice</button>`) + `
@@ -375,13 +404,21 @@ Views.invoices = {
       <div id="inv-list"></div>`;
 
     el.querySelector("#inv-add").addEventListener("click", () =>
-      Invoices.openEditor(null, { invoiceNumber: `INV-${yr}-${String(S.invoices.length + 1).padStart(3, "0")}` }));
+      Invoices.openEditor(null, { invoiceNumber: Invoices.nextNumber(yr) }));
 
     UI.listView(el.querySelector("#inv-list"), {
-      data: () => S.invoices,
+      data: () => Store.all("invoice"),   // the live list — a sync swaps the whole state object
       searchText: i => [i.invoiceNumber, Store.clientName(i.clientId), i.serviceDescription, Store.woLabel(i.workOrderId)].join(" "),
       filters: [
-        { id: "status", label: "Status", options: SCHEMA.invoiceStatuses.map(s => s.value), apply: (i, v) => (v === "Overdue" ? Store.invoiceIsOverdue(i) || i.status === "Overdue" : i.status === v) },
+        { id: "status", label: "Status",
+          options: [{ value: "open", label: "Outstanding (open balance)" }, { value: "awaiting", label: "Awaiting payment (not overdue)" },
+            ...SCHEMA.invoiceStatuses.map(s => s.value)],
+          apply: (i, v) => v === "open" ? Invoices.isOutstanding(i)
+            : v === "awaiting" ? ["Sent", "Partial"].includes(i.status) && Store.invoiceBalance(i) > 0.005 && !Store.invoiceIsOverdue(i)
+            : v === "Overdue" ? Store.invoiceIsOverdue(i) || i.status === "Overdue"
+            : i.status === v },
+        { id: "yr", label: "Year", options: () => [...new Set([...App.yearsWithData(), ...Store.all("invoice").map(i => U.yearOf(i.invoiceDate)).filter(Boolean)])].sort((a, b) => b - a),
+          apply: (i, v) => U.yearOf(i.invoiceDate) === Number(v) },
         { id: "client", label: "Client", options: () => Store.all("client").map(c => ({ value: c.id, label: c.name })), apply: (i, v) => i.clientId === v },
       ],
       columns: [
@@ -394,7 +431,7 @@ Views.invoices = {
         { label: "Balance", html: i => { const b = Store.invoiceBalance(i); return b > 0.005 ? `<strong>${U.money(b)}</strong>` : "—"; }, sortVal: i => Store.invoiceBalance(i), num: true },
         { label: "Verified", html: i => Invoices.verifiedBadge(i), sortVal: i => i.status === "Paid" ? 0 : 1 },
       ],
-      defaultSort: { col: 3, dir: -1 },
+      defaultSort: { col: 4, dir: -1 },   // Date, newest first
       rowClass: i => Store.invoiceIsOverdue(i) ? "row-warn" : "",
       onRow: i => Invoices.openDetail(i),
       card: i => `<div class="record-card">

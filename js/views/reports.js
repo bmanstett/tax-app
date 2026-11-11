@@ -188,7 +188,7 @@ const Reports = (() => {
         { label: "Gross spent", value: r => U.money(r.gross), num: true },
         { label: "Est. deductible", value: r => U.money(r.deductible), num: true },
       ], rows, { totalRow: ["TOTAL (+ mileage below)", U.sum(rows, r => r.count), U.money(U.sum(rows, r => r.gross)), U.money(U.sum(rows, r => r.deductible))] }) +
-      `<p style="font-size:12.5px;margin-top:8px"><strong>Standard mileage (Car & Truck, Line 9):</strong> ${U.num(t.mileageMiles, 0)} business miles × $${t.mileageRate.toFixed(2)} ≈ ${U.money(t.mileageDeduction)}</p>`,
+      `<p style="font-size:12.5px;margin-top:8px"><strong>Standard mileage (Car & Truck, Line 9):</strong> ${U.num(t.mileageMiles, 0)} business miles at ${t.mileageRateText} ≈ ${U.money(t.mileageDeduction)}</p>`,
       { name: `schedule-c-summary-${year}.csv`, content: U.toCSV(rows, [{ key: "line", label: "Organizer Line" }, { key: "count", label: "Entries" }, { key: "gross", label: "Gross" }, { key: "deductible", label: "Est. Deductible" }]) });
   }
 
@@ -217,7 +217,7 @@ const Reports = (() => {
     const rows = U.sortBy(Store.yearData(year).mileage, m => m.date || "", 1);
     const t = Store.taxSummary(year);
     show(`Mileage Log — ${year}`, head("Business Mileage Log", year) +
-      `<p style="font-size:12px;color:var(--text-2)">Standard rate $${t.mileageRate.toFixed(2)}/mi. Business trips only — commuting and personal miles excluded by policy.</p>` +
+      `<p style="font-size:12px;color:var(--text-2)">Standard rate ${t.mileageRateText}. Business trips only — commuting and personal miles excluded by policy.</p>` +
       tbl([
         { label: "Date", value: r => U.fmtDate(r.date) },
         { label: "From", value: r => U.truncate(r.startLocation || "", 20) },
@@ -316,12 +316,12 @@ const Reports = (() => {
       c, paid: U.sum((c.payments || []).filter(p => U.yearOf(p.date) === Number(year)), p => p.amount),
     })).filter(r => r.paid > 0 || r.c.may1099);
     show(`Contractor Payment Review — ${year}`, head("Contractor Payment Summary (1099-NEC review)", year) +
-      `<p style="font-size:12px;color:var(--text-2)">Contractors paid $600+ for services generally require a 1099-NEC — confirm requirements and filing with your CPA.</p>` +
+      `<p style="font-size:12px;color:var(--text-2)">Contractors paid ${U.money(SCHEMA.nec1099Threshold(year), { cents: false })} or more for services in ${year} generally require a 1099-NEC (the threshold was $600 through 2025) — confirm requirements and filing with your CPA.</p>` +
       tbl([
         { label: "Contractor", value: r => r.c.name },
         { label: "Business", value: r => r.c.businessName || "" },
         { label: "W-9", value: r => r.c.w9Received ? "On file" : "MISSING" },
-        { label: "Likely 1099?", value: r => r.paid >= 600 ? "Yes — review" : "Below $600" },
+        { label: "Likely 1099?", value: r => r.paid >= SCHEMA.nec1099Threshold(year) ? "Yes — review" : `Below ${U.money(SCHEMA.nec1099Threshold(year), { cents: false })}` },
         { label: `Paid ${year}`, value: r => U.money(r.paid), num: true },
       ], rows, { totalRow: ["TOTAL", "", "", "", U.money(U.sum(rows, r => r.paid))] }));
   }
@@ -389,7 +389,7 @@ const Reports = (() => {
       ...d.expenses.filter(e => e.cpaReview).map(e => `Expense: ${U.fmtDate(e.date)} ${e.vendor} ${U.money(e.amount)} — ${e.cpaNotes || e.notes || e.auditNotes || "flagged"}`),
       ...d.income.filter(i => i.cpaReview).map(i => `Income: ${U.fmtDate(i.date)} ${U.money(i.amount)} — ${i.notes || "flagged"}`),
       ...S.assets.filter(a => a.askCpaDepreciation && ["Not Reviewed", "Sent to CPA"].includes(a.depreciationStatus || "Not Reviewed")).map(a => `Asset: ${a.name} ${U.money(a.cost)} — depreciation/Sec. 179 review`),
-      ...S.contractors.filter(c => Contractors.paidYtd(c, year) >= 600).map(c => `Contractor: ${c.name} paid ${U.money(Contractors.paidYtd(c, year))} — 1099-NEC review${c.w9Received ? "" : " (W-9 MISSING)"}`),
+      ...S.contractors.filter(c => Contractors.paidYtd(c, year) >= SCHEMA.nec1099Threshold(year)).map(c => `Contractor: ${c.name} paid ${U.money(Contractors.paidYtd(c, year))} — 1099-NEC review${c.w9Received ? "" : " (W-9 MISSING)"}`),
       ...(S.homeOffice.usedRegularlyExclusively && S.homeOffice.cpaReview ? ["Home office — confirm method and deductibility"] : []),
     ];
     const missing = Alerts.attention(year).filter(a => ["exp-missing-receipt", "exp-missing-purpose", "exp-uncategorized", "mi-missing-purpose"].includes(a.id));
@@ -435,7 +435,7 @@ const Reports = (() => {
       ], U.sortBy(Object.values(byLine), r => r.deductible, -1),
         { totalRow: ["TOTAL", "", U.money(U.sum(Object.values(byLine), r => r.gross)), U.money(t.deductibleExpenses)] }) +
       H("6. Mileage") +
-      `<p style="font-size:12.5px">${U.num(t.mileageMiles, 0)} business miles × $${t.mileageRate.toFixed(2)} ≈ <strong>${U.money(t.mileageDeduction)}</strong> (standard-rate estimate). Full log available as a separate report. ${Alerts.mileageScore(year).score}% of trips fully substantiated.</p>` +
+      `<p style="font-size:12.5px">${U.num(t.mileageMiles, 0)} business miles at ${t.mileageRateText} ≈ <strong>${U.money(t.mileageDeduction)}</strong> (standard-rate estimate). Full log available as a separate report. ${Alerts.mileageScore(year).score}% of trips fully substantiated.</p>` +
       H("7. Assets purchased / in service") +
       tbl([
         { label: "Item", value: a => a.name }, { label: "Purchased", value: a => U.fmtDate(a.purchaseDate) },
@@ -459,7 +459,7 @@ const Reports = (() => {
       H("12. Items flagged for CPA review") +
       (flagged.length ? flagged.map(f => `<p style="font-size:12.5px;margin:3px 0">• ${U.escapeHtml(f)}</p>`).join("") : `<p style="font-size:12.5px">None flagged.</p>`) +
       H("13. Assumptions used in estimates") +
-      `<p style="font-size:12.5px">SE tax ${S.settings.seTaxRatePct}% of 92.35% of net · Federal reserve ${S.settings.federalReservePct}% · State reserve ${S.settings.stateReservePct}% · Mileage $${Store.mileageRate(year).toFixed(2)}/mi. All figures are bookkeeping estimates prepared by the owner, not tax determinations.</p>`);
+      `<p style="font-size:12.5px">SE tax ${S.settings.seTaxRatePct}% of 92.35% of net · Federal reserve ${S.settings.federalReservePct}% · State reserve ${S.settings.stateReservePct}% · Mileage ${Store.mileageRateText(year)}. All figures are bookkeeping estimates prepared by the owner, not tax determinations.</p>`);
     // mark checklist item
     const yc = S.yearChecklists[String(year)] = S.yearChecklists[String(year)] || {};
     yc.cpaExport = true; Store.save();

@@ -16,15 +16,24 @@ const Charts = (() => {
     return step * pow;
   };
 
-  const fmtTick = v => v >= 1000 ? `${(v / 1000).toFixed(v >= 10000 ? 0 : 1)}k` : String(Math.round(v));
+  const fmtTick = v => {
+    const a = Math.abs(v);
+    return (v < 0 ? "-" : "") + (a >= 1000 ? `${(a / 1000).toFixed(a >= 10000 ? 0 : 1)}k` : String(Math.round(a)));
+  };
 
   function frame(w, h) { return { w, h, padL: 44, padR: 10, padT: 12, padB: 26 }; }
+  /* The drawing canvas is sized to the screen, so one unit stays close to one pixel: a
+     720-unit canvas squeezed into a 330px phone card shrank the axis text below 5px.
+     At 780px and wider it is 720, exactly as before. */
+  const chartW = () => Math.max(340, Math.min(720, (window.innerWidth || 720) - 60));
 
-  function gridlines(f, max, fmt = fmtTick) {
+  /** min: the bottom of the scale — below zero when a line chart has a losing month (the
+      labels used to read 0…max over a scale that really ran from −max to max). */
+  function gridlines(f, max, fmt = fmtTick, min = 0) {
     let out = "";
     const steps = 4;
     for (let i = 0; i <= steps; i++) {
-      const v = max * i / steps;
+      const v = min + (max - min) * i / steps;
       const y = f.h - f.padB - (f.h - f.padT - f.padB) * i / steps;
       out += `<line x1="${f.padL}" y1="${y}" x2="${f.w - f.padR}" y2="${y}" stroke="var(--chart-grid)" stroke-width="1"/>`;
       out += `<text x="${f.padL - 6}" y="${y + 3.5}" text-anchor="end" font-size="10" fill="var(--text-3)">${fmt(v)}</text>`;
@@ -34,7 +43,7 @@ const Charts = (() => {
 
   /** Grouped bars. series = [{name, color, values:[…]}], labels aligned with values. */
   function barChart({ labels, series, height = 240, money = true }) {
-    const f = frame(720, height);
+    const f = frame(chartW(), height);
     const innerW = f.w - f.padL - f.padR, innerH = f.h - f.padT - f.padB;
     const max = niceMax(Math.max(1, ...series.flatMap(s => s.values.map(v => Math.abs(v)))));
     const n = labels.length || 1;
@@ -59,7 +68,7 @@ const Charts = (() => {
 
   /** Line chart. series = [{name, color, values}] */
   function lineChart({ labels, series, height = 240, money = true }) {
-    const f = frame(720, height);
+    const f = frame(chartW(), height);
     const innerW = f.w - f.padL - f.padR, innerH = f.h - f.padT - f.padB;
     const allVals = series.flatMap(s => s.values);
     const maxV = niceMax(Math.max(1, ...allVals.map(v => Math.abs(v))));
@@ -68,7 +77,7 @@ const Charts = (() => {
     const n = labels.length || 1;
     const xAt = i => f.padL + (n === 1 ? innerW / 2 : innerW * i / (n - 1));
     const yAt = v => f.padT + innerH * (1 - (v - minV) / (maxV - minV));
-    let out = gridlines(f, maxV, fmtTick);
+    let out = gridlines(f, maxV, fmtTick, minV);
     if (hasNeg) out += `<line x1="${f.padL}" y1="${yAt(0)}" x2="${f.w - f.padR}" y2="${yAt(0)}" stroke="var(--text-3)" stroke-width="1" stroke-dasharray="3 3"/>`;
     series.forEach((s, si) => {
       const color = s.color || PALETTE[si];
@@ -168,13 +177,18 @@ const Charts = (() => {
   }
 
   /* Tooltip binding — one floating tooltip for all charts */
-  let tipEl = null;
+  let tipEl = null, tipTimer = 0;
   function bindTooltips(root = document) {
+    hideTip();   // the charts were just redrawn — a tip left from the old ones would never get its mouseleave
     root.querySelectorAll("[data-tip]").forEach(el => {
       el.addEventListener("mouseenter", e => showTip(e, el.getAttribute("data-tip")));
       el.addEventListener("mousemove", e => moveTip(e));
       el.addEventListener("mouseleave", hideTip);
-      el.addEventListener("touchstart", e => { showTip(e.touches[0], el.getAttribute("data-tip")); setTimeout(hideTip, 1800); }, { passive: true });
+      el.addEventListener("touchstart", e => {
+        showTip(e.touches[0], el.getAttribute("data-tip"));
+        clearTimeout(tipTimer);                 // an earlier tap's timer must not close this tip
+        tipTimer = setTimeout(hideTip, 1800);
+      }, { passive: true });
     });
   }
   function showTip(e, text) {

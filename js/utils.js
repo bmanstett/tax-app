@@ -37,36 +37,66 @@ const U = {
     return new Date(y, m - 1, d);
   },
 
+  /* Number and date formatters are slow to build and quick to reuse. toLocaleString()
+     builds a fresh one on every call — which, for a list of a few thousand rows with
+     a date and an amount in each, was most of the time spent drawing it. Each kind is
+     built once here and kept; the text they produce is exactly what it was. */
+  _fmt: {}, _fmtTz: NaN,
+  _f(key, make) {
+    // A date formatter keeps the time zone it was built in (toLocaleString() re-read it on
+    // every call). This app stays open for days while the phone crosses time zones, so the
+    // kept ones are rebuilt whenever the device's UTC offset moves.
+    const tz = new Date().getTimezoneOffset();
+    if (tz !== U._fmtTz) { U._fmtTz = tz; U._fmt = {}; }
+    return U._fmt[key] || (U._fmt[key] = make());
+  },
+  /** A calendar date ("2026-03-05") as a UTC instant — calendar dates are formatted zone-free. */
+  _utcDay(iso) {
+    const [y, m, d] = String(iso || "").slice(0, 10).split("-").map(Number);
+    return y && m && d ? Date.UTC(y, m - 1, d) : NaN;
+  },
+
+  /** "Mar 5, 2026". The same few hundred dates come round again and again in a list,
+      so each distinct day is formatted once and remembered. */
+  _dates: new Map(),
   fmtDate(iso) {
-    const d = U.parseDate(iso);
-    if (!d) return "—";
-    return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+    if (!iso) return "—";
+    const key = String(iso).slice(0, 10);
+    let out = U._dates.get(key);
+    if (out === undefined) {
+      const t = U._utcDay(key);
+      out = isNaN(t) ? "—" : U._f("dateUTC", () => new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })).format(t);
+      if (U._dates.size > 4000) U._dates.clear();
+      U._dates.set(key, out);
+    }
+    return out;
   },
 
   fmtDateShort(iso) {
-    const d = U.parseDate(iso);
-    if (!d) return "—";
-    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    const t = U._utcDay(iso);
+    if (isNaN(t)) return "—";
+    return U._f("dateShortUTC", () => new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", timeZone: "UTC" })).format(t);
   },
 
   fmtDateTime(iso) {
     if (!iso) return "—";
     const d = new Date(iso);
-    return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) +
-      " " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    if (isNaN(d.getTime())) return "—";
+    return U._f("date", () => new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" })).format(d) +
+      " " + U._f("time", () => new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" })).format(d);
   },
 
   money(n, opts = {}) {
     const v = Number(n) || 0;
-    return v.toLocaleString("en-US", {
-      style: "currency", currency: "USD",
-      minimumFractionDigits: opts.cents === false ? 0 : 2,
-      maximumFractionDigits: opts.cents === false ? 0 : 2,
-    });
+    const digits = opts.cents === false ? 0 : 2;
+    return U._f("money" + digits, () => new Intl.NumberFormat("en-US", {
+      style: "currency", currency: "USD", minimumFractionDigits: digits, maximumFractionDigits: digits,
+    })).format(v);
   },
 
   num(n, dec = 0) {
-    return (Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: dec, maximumFractionDigits: dec });
+    return U._f("num" + dec, () => new Intl.NumberFormat("en-US", { minimumFractionDigits: dec, maximumFractionDigits: dec }))
+      .format(Number(n) || 0);
   },
 
   pct(n, dec = 0) { return `${U.num(n, dec)}%`; },
@@ -83,7 +113,8 @@ const U = {
   monthLabel(key) { // "2026-03" -> "Mar"
     if (!key) return "";
     const [y, m] = key.split("-").map(Number);
-    return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: "short" });
+    if (!y || !m) return "";
+    return U._f("monthUTC", () => new Intl.DateTimeFormat(undefined, { month: "short", timeZone: "UTC" })).format(Date.UTC(y, m - 1, 1));
   },
 
   daysBetween(isoA, isoB) {
@@ -130,12 +161,15 @@ const U = {
   /** CSV export: rows = array of objects, cols = [{key,label}] */
   toCSV(rows, cols) {
     const esc = v => {
-      const s = String(v ?? "");
+      // numbers: drop binary float noise (360.14000000000004 → 360.14); real values have at most 3 decimals
+      const s = typeof v === "number" ? String(Math.round(v * 1e6) / 1e6) : String(v ?? "");
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
     const head = cols.map(c => esc(c.label)).join(",");
     const body = rows.map(r => cols.map(c => esc(typeof c.value === "function" ? c.value(r) : r[c.key])).join(",")).join("\n");
-    return head + "\n" + body;
+    // a byte-order mark first: without it Excel on Windows reads the file as ANSI and every
+    // dash and accent comes out garbled
+    return "﻿" + head + "\n" + body;
   },
 
   sum(arr, fn = x => x) { return arr.reduce((t, x) => t + (Number(fn(x)) || 0), 0); },

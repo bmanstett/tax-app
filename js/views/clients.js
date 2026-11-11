@@ -8,7 +8,12 @@ window.Views = window.Views || {};
 
 const Clients = (() => {
 
+  /** A client's totals — five passes over the books, asked for by four columns, the card and
+      the sort (twice per comparison), so they're worked out once per change and kept. Read-only. */
   function stats(c, year) {
+    return Store.cached(`clientStats:${c.id}:${year}`, () => computeStats(c, year));
+  }
+  function computeStats(c, year) {
     const S = Store.state;
     const wos = S.workOrders.filter(w => w.clientId === c.id);
     const open = wos.filter(w => SCHEMA.woOpenStatuses.includes(w.status) || ["Submitted", "Invoiced"].includes(w.status));
@@ -35,7 +40,7 @@ const Clients = (() => {
   }
 
   function reconStatus(c, year) {
-    const rows = Alerts.reconcile1099(year).filter(r => r.clientId === c.id);
+    const rows = Store.cached(`recon1099:${year}`, () => Alerts.reconcile1099(year)).filter(r => r.clientId === c.id);
     if (!rows.length) return { label: "N/A", color: "slate" };
     const r = rows[0];
     if (!r.expected) return { label: "Not expected", color: "slate" };
@@ -109,8 +114,9 @@ const Clients = (() => {
     m.body.querySelector("#cl-newwo").addEventListener("click", () => { m.close(); WO.openEditor(null, { clientId: c.id, hourlyRate: c.defaultHourlyRate || "", flatFee: c.defaultFlatFee || "" }); });
     m.body.querySelector("#cl-newinv").addEventListener("click", () => {
       m.close();
-      UI.openForm("invoice", null, { presets: { clientId: c.id, invoiceNumber: `INV-${App.viewYear()}-${String(Store.all("invoice").length + 1).padStart(3, "0")}` },
-        onSave: v => { Store.add("invoice", v); UI.toast("Invoice added", "success"); App.rerender(); } });
+      // the one invoice editor — so status, payment defaults, the work order and the income
+      // prompt all follow, exactly as when the invoice is created anywhere else
+      Invoices.openEditor(null, { clientId: c.id, invoiceNumber: Invoices.nextNumber() });
     });
   }
 

@@ -57,10 +57,10 @@ Views.dashboard = {
 
     /* ---- profit per job / effective hourly rate ---- */
     const jobProfit = wos.filter(w => !["Cancelled"].includes(w.status)).map(w => {
-      const inc = U.sum(S.income.filter(r => r.workOrderId === w.id), r => r.amount) ||
-        U.sum(S.invoices.filter(i => i.workOrderId === w.id), Store.invoiceTotal);
-      const exp = U.sum(S.expenses.filter(e => e.workOrderId === w.id && !(e.reimbursable && e.reimbursed)), e => e.amount);
-      const mi = U.sum(S.mileage.filter(m => m.workOrderId === w.id && !(m.reimbursable && m.reimbursed)), Store.tripDeduction);
+      const L = WO.linked(w);
+      const inc = U.sum(L.income, r => r.amount) || U.sum(L.invoices, Store.invoiceTotal);
+      const exp = U.sum(L.expenses.filter(e => !(e.reimbursable && e.reimbursed)), e => e.amount);
+      const mi = U.sum(L.mileage.filter(m => !(m.reimbursable && m.reimbursed)), Store.tripDeduction);
       const profit = U.round2(inc - exp - mi);
       const hrs = Number(w.actualHours) || 0;
       return { wo: w, profit, inc, ehr: hrs > 0 ? U.round2(profit / hrs) : null };
@@ -69,21 +69,37 @@ Views.dashboard = {
     const dueQ = SCHEMA.quarterDueDates(year);
     const paidByQ = q => U.sum(d.taxPayments.filter(p => p.quarter === q), p => p.amount);
 
+    /* ---- where each tile lands: its page, filtered to exactly the records it counts ----
+       link(key, lists) registers the list filters for a tile / attention line and returns
+       the key that goes in its data-link attribute (see App.go's `lists`). */
+    const yr = String(year);
+    const LINKS = {};
+    const link = (key, lists) => { if (!lists) return ""; LINKS[key] = lists; return key; };
+    // unbilled reimbursables live in two lists — open the one that actually has some
+    const reimbInMileageOnly = !d.expenses.some(e => e.reimbursable && !e.reimbursed) && d.mileage.some(m => m.reimbursable && !m.reimbursed);
+
     el.innerHTML = `
       ${UI.pageHeader("Dashboard", `${S.settings.businessName} — tax year <strong>${year}</strong>. Figures are organizer estimates, not tax advice.`, App.yearPickerHtml())}
 
       <div class="stat-grid">
-        ${UI.statCard({ label: "YTD Gross Income", value: U.money(t.grossIncome), color: "green", icon: "💵", onClickRoute: "income" })}
-        ${UI.statCard({ label: "YTD Expenses (deductible est.)", value: U.money(t.deductibleExpenses), sub: `+ ${U.money(t.mileageDeduction)} est. mileage`, color: "red", icon: "💳", onClickRoute: "expenses" })}
+        ${UI.statCard({ label: "YTD Gross Income", value: U.money(t.grossIncome), color: "green", icon: "💵", onClickRoute: "income", link: link("income", { "inc-list": { filters: { yr } } }) })}
+        ${UI.statCard({ label: "YTD Expenses (deductible est.)", value: U.money(t.deductibleExpenses), sub: `+ ${U.money(t.mileageDeduction)} est. mileage`, color: "red", icon: "💳", onClickRoute: "expenses", link: link("expenses", { "exp-list": { filters: { yr } } }) })}
         ${UI.statCard({ label: "Estimated Net Profit", value: U.money(t.netProfit), sub: "before CPA adjustments", color: "accent", icon: "📈" })}
+        ${(() => {
+          const ts = TaxIdeas.summary(year);
+          return UI.statCard({ label: "Tax-Saving Ideas", value: ts.potential > 0 ? "≈ " + U.money(ts.potential, { cents: false }) : `${ts.open} open`,
+            sub: ts.potential > 0 ? `est. tax you could still save · ${ts.open} idea${ts.open === 1 ? "" : "s"} open` : "legal ways to lower taxable income",
+            color: "green", icon: "💡", onClickRoute: "taxsavings" });
+        })()}
         ${UI.statCard({ label: "Total Tax Reserve (est.)", value: U.money(t.totalReserve), sub: `SE ${U.money(t.seTax, { cents: false })} · Fed ${U.money(t.fedReserve, { cents: false })} · State ${U.money(t.stateReserve, { cents: false })}`, color: "purple", icon: "🏛️", onClickRoute: "taxes" })}
-        ${UI.statCard({ label: "Pending Fees (not yet invoiced)", value: U.money(pendingFees), sub: `${pendingWOs.length} work order(s) awaiting invoice`, color: "purple", icon: "⏳", onClickRoute: "workorders" })}
-        ${UI.statCard({ label: "Outstanding Invoices", value: U.money(U.sum(outstanding, Store.invoiceBalance)), sub: `${outstanding.length} open · ${overdue.length} overdue`, color: overdue.length ? "red" : "blue", icon: "🧾", onClickRoute: "invoices" })}
-        ${UI.statCard({ label: "Work Orders", value: `${openWOs.length} open`, sub: `${unbilledWOs.length} unbilled · ${closedWOs.length} closed`, color: "teal", icon: "📋", onClickRoute: "workorders" })}
-        ${UI.statCard({ label: "Business Miles (YTD)", value: U.num(t.mileageMiles, 0), sub: `≈ ${U.money(t.mileageDeduction)} deduction @ $${t.mileageRate.toFixed(2)}/mi`, color: "amber", icon: "🚗", onClickRoute: "mileage" })}
-        ${UI.statCard({ label: "Unbilled Reimbursables", value: U.money(reimbUnbilled), sub: "expenses + mileage not yet invoiced", color: "amber", icon: "↩️", onClickRoute: "expenses" })}
-        ${UI.statCard({ label: "Missing Receipts", value: String(missingReceipts), sub: missingReceipts ? "fix before year-end" : "all clear 🎉", color: missingReceipts ? "red" : "green", icon: "📎", onClickRoute: "expenses" })}
-        ${UI.statCard({ label: "Paid Invoices (YTD)", value: String(paidInv.length), sub: U.money(U.sum(paidInv, i => Number(i.amountPaid) || 0)), color: "green", icon: "✅", onClickRoute: "invoices" })}
+        ${UI.statCard({ label: "Pending Fees (not yet invoiced)", value: U.money(pendingFees), sub: `${pendingWOs.length} work order(s) awaiting invoice`, color: "purple", icon: "⏳", onClickRoute: "workorders", link: link("pending", { "wo-list": { filters: { flag: "pending" } } }) })}
+        ${UI.statCard({ label: "Outstanding Invoices", value: U.money(U.sum(outstanding, Store.invoiceBalance)), sub: `${outstanding.length} open · ${overdue.length} overdue`, color: overdue.length ? "red" : "blue", icon: "🧾", onClickRoute: "invoices", link: link("outstanding", { "inv-list": { filters: { status: "open" } } }) })}
+        ${UI.statCard({ label: "Work Orders", value: `${openWOs.length} open`, sub: `${unbilledWOs.length} unbilled · ${closedWOs.length} closed`, color: "teal", icon: "📋", onClickRoute: "workorders", link: link("openwos", { "wo-list": { filters: { status: SCHEMA.woOpenStatuses } } }) })}
+        ${UI.statCard({ label: "Business Miles (YTD)", value: U.num(t.mileageMiles, 0), sub: `≈ ${U.money(t.mileageDeduction)} deduction @ ${t.mileageRateText}`, color: "amber", icon: "🚗", onClickRoute: "mileage", link: link("miles", { "mi-list": { filters: { yr } } }) })}
+        ${UI.statCard({ label: "Unbilled Reimbursables", value: U.money(reimbUnbilled), sub: "expenses + mileage not yet invoiced", color: "amber", icon: "↩️", onClickRoute: reimbInMileageOnly ? "mileage" : "expenses",
+          link: link("reimb", reimbInMileageOnly ? { "mi-list": { filters: { yr, flag: "reimb" } } } : { "exp-list": { filters: { yr, flag: "reimb" } } }) })}
+        ${UI.statCard({ label: "Missing Receipts", value: String(missingReceipts), sub: missingReceipts ? "fix before year-end" : "all clear 🎉", color: missingReceipts ? "red" : "green", icon: "📎", onClickRoute: "expenses", link: link("noreceipt", { "exp-list": { filters: { yr, flag: "noreceipt" } } }) })}
+        ${UI.statCard({ label: "Paid Invoices (YTD)", value: String(paidInv.length), sub: U.money(U.sum(paidInv, i => Number(i.amountPaid) || 0)), color: "green", icon: "✅", onClickRoute: "invoices", link: link("paidinv", { "inv-list": { filters: { status: "Paid", yr } } }) })}
       </div>
 
       <div class="grid-23">
@@ -140,7 +156,7 @@ Views.dashboard = {
             <div class="card-title">🚨 What needs attention</div>
             <div class="card-sub">Most important first — tap to jump there</div>
             ${attention.length ? attention.slice(0, 9).map(a => `
-              <div class="attention-item sev-${a.severity}" ${a.action ? `data-action="${a.action}"` : `data-route="${a.route}"`}>
+              <div class="attention-item sev-${a.severity}" ${a.action ? `data-action="${a.action}"` : `data-route="${a.route}" data-link="${link("att-" + a.id, a.list)}"`}>
                 <div class="attention-icon">${a.icon}</div>
                 <div class="attention-text">
                   <div class="attention-title">${U.escapeHtml(a.title)}</div>
@@ -161,7 +177,7 @@ Views.dashboard = {
             </div>
             <div style="margin-top:10px">
               ${[...cpa.detail, ...audit.detail].filter((x, i, arr) => arr.findIndex(y => y.id === x.id) === i).slice(0, 6).map(x => `
-                <div class="score-line" ${x.action ? `data-action="${x.action}"` : `data-route="${x.route}"`} style="cursor:pointer">
+                <div class="score-line" ${x.action ? `data-action="${x.action}"` : `data-route="${x.route}" data-link="${link("att-" + x.id, x.list)}"`} style="cursor:pointer">
                   <span>${U.escapeHtml(U.truncate(x.title, 46))}</span><span class="${x.severity === "bad" ? "bad" : "warn"}">−${x.penalty}</span>
                 </div>`).join("") || `<div class="score-line"><span>No deductions — well documented</span><span class="ok">✓</span></div>`}
             </div>
@@ -198,7 +214,16 @@ Views.dashboard = {
       ${UI.disclaimerHtml()}
     `;
 
-    el.querySelectorAll("[data-route]").forEach(x => x.addEventListener("click", () => App.go(x.getAttribute("data-route"), { freshLists: true })));
+    // every tile, attention line and button goes to its page, filtered to what it counts.
+    // (Listeners go on the elements, never on `el` itself: #main outlives every render.)
+    const follow = x => App.go(x.getAttribute("data-route"), { freshLists: true, lists: LINKS[x.getAttribute("data-link")] || null });
+    el.querySelectorAll("[data-route]").forEach(x => {
+      x.addEventListener("click", () => follow(x));
+      // tiles are focusable — Enter / Space opens them (a <button> already does that itself)
+      if (x.tagName !== "BUTTON") x.addEventListener("keydown", e => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); follow(x); }
+      });
+    });
     // some attention items open a review screen instead of just jumping to a page
     el.querySelectorAll("[data-action]").forEach(x => x.addEventListener("click", () => DataHealth.run(x.getAttribute("data-action"))));
     Charts.bindTooltips(el);
