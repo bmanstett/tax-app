@@ -10,13 +10,13 @@ const Taxes = (() => {
   function addPayment(presets) {
     UI.openForm("taxPayment", null, {
       presets: { taxYear: App.viewYear(), ...presets },
-      onSave: vals => { Store.add("taxPayment", vals); UI.toast("Tax payment logged", "success"); App.rerender(); },
+      onSave: vals => { if (!Store.add("taxPayment", vals)) return false; UI.toast("Tax payment logged", "success"); App.rerender(); },
     });
   }
   function editPayment(rec) {
     UI.openForm("taxPayment", rec, {
-      onSave: vals => { Store.update("taxPayment", rec.id, vals); UI.toast("Payment updated", "success"); App.rerender(); },
-      deleteFn: r => { Store.remove("taxPayment", r.id); UI.toast("Payment deleted"); App.rerender(); },
+      onSave: vals => { if (!Store.update("taxPayment", rec.id, vals)) return false; UI.toast("Payment updated", "success"); App.rerender(); },
+      deleteFn: r => { if (Store.remove("taxPayment", r.id)) UI.toast("Payment deleted"); App.rerender(); },
     });
   }
   return { addPayment, editPayment };
@@ -43,6 +43,10 @@ Views.taxes = {
     const checklist = Reports.checklistItems(year);
     const doneCount = checklist.filter(i => i.done).length;
 
+    // client-reimbursed expenses are left out of the deduction estimate — yet the reimbursement,
+    // once invoiced and paid, is in gross income. Shown so the gap goes to the CPA, not into tax.
+    const reimbNotDeducted = U.sum(d.expenses.filter(e => e.reimbursable && e.reimbursed && e.deductible !== false), e => e.amount);
+
     el.innerHTML = UI.pageHeader("Quarterly Taxes & Year-End Planning",
       `Organizer-level estimates for tax year <strong>${year}</strong>${locked ? " · " + UI.badge("YEAR LOCKED", "red") : ""}. Confirm all amounts with your CPA.`,
       `${App.yearPickerHtml()}<button class="btn btn-primary" id="tx-add">＋ Log Tax Payment</button>`) + `
@@ -50,7 +54,8 @@ Views.taxes = {
       <div class="stat-grid">
         ${UI.statCard({ label: "Gross income", value: U.money(t.grossIncome), color: "green" })}
         ${UI.statCard({ label: "Est. deductions", value: U.money(t.deductibleExpenses + t.mileageDeduction), sub: `expenses ${U.money(t.deductibleExpenses, { cents: false })} + mileage ${U.money(t.mileageDeduction, { cents: false })}` })}
-        ${UI.statCard({ label: "Est. net profit", value: U.money(t.netProfit), color: "accent" })}
+        ${UI.statCard({ label: "Est. net profit", value: U.money(t.netProfit), color: "accent",
+          sub: reimbNotDeducted ? `${U.money(reimbNotDeducted, { cents: false })} of client-reimbursed expenses not deducted — see Tax Savings` : "" })}
         ${UI.statCard({ label: "SE tax reserve (est.)", value: U.money(t.seTax), sub: `${s.seTaxRatePct}% of 92.35% of net`, color: "purple" })}
         ${UI.statCard({ label: "Federal reserve (est.)", value: U.money(t.fedReserve), sub: `${s.federalReservePct}% of net`, color: "purple" })}
         ${UI.statCard({ label: "State reserve (est.)", value: U.money(t.stateReserve), sub: `${s.stateReservePct}% of net`, color: "purple" })}
@@ -109,11 +114,12 @@ Views.taxes = {
               ["SE tax rate", U.pct(s.seTaxRatePct, 1) + " of 92.35% of net"],
               ["Federal reserve", U.pct(s.federalReservePct) + " of net"],
               ["State reserve", U.pct(s.stateReservePct) + " of net"],
-              [`Mileage rate ${year}`, "$" + Store.mileageRate(year).toFixed(2) + "/mi"],
+              [`Mileage rate ${year}`, Store.mileageRateText(year)],
               ["Business start", s.businessStartDate ? U.fmtDate(s.businessStartDate) : "—"],
               ["Entity", U.escapeHtml(s.entityType)],
             ])}
             <button class="btn btn-sm" style="margin-top:10px" data-route="settings">Edit assumptions in Settings →</button>
+            <button class="btn btn-sm btn-primary" style="margin-top:10px" data-route="taxsavings">💡 Ways to lower this →</button>
             <div class="disclaimer-inline">Estimates ignore other household income, deductions, credits, QBI, and bracket effects. They are reserves, not filing amounts.</div>
           </div>
 

@@ -15,11 +15,11 @@ const Mileage = (() => {
         if ((!vals.miles || Number(vals.miles) === 0) && vals.odometerStart && vals.odometerEnd) {
           vals.miles = U.round2(Number(vals.odometerEnd) - Number(vals.odometerStart));
         }
-        if (rec) Store.update("mileage", rec.id, vals); else Store.add("mileage", vals);
+        if (!(rec ? Store.update("mileage", rec.id, vals) : Store.add("mileage", vals))) return false;   // refused (a locked tax year — the notice says so): the form stays open with what was typed
         UI.toast(rec ? "Trip updated" : `Trip logged — ${U.num(vals.miles, 1)} mi`, "success");
         App.rerender();
       },
-      deleteFn: r => { Store.remove("mileage", r.id); UI.toast("Trip deleted"); App.rerender(); },
+      deleteFn: r => { if (Store.remove("mileage", r.id)) UI.toast("Trip deleted"); App.rerender(); },
     });
   }
 
@@ -80,7 +80,7 @@ const Mileage = (() => {
         workOrderId: w ? w.id : "", clientId: w ? w.clientId : "",
         reimbursable: w ? !!w.mileageAllowed : false,
       });
-      UI.toast(`Trip logged — ${U.num(miles, 1)} mi ≈ ${U.money(miles * Store.mileageRate(U.yearOf(U.todayISO())))}`, "success");
+      UI.toast(`Trip logged — ${U.num(miles, 1)} mi ≈ ${U.money(miles * Store.mileageRateOn(U.todayISO()))}`, "success");
       m.close(); App.rerender();
     });
   }
@@ -95,7 +95,7 @@ const Mileage = (() => {
       { label: "Round Trip", value: r => r.roundTrip ? "Yes" : "No" },
       { key: "miles", label: "Miles" }, { key: "odometerStart", label: "Odometer Start" }, { key: "odometerEnd", label: "Odometer End" },
       { key: "parking", label: "Parking" }, { key: "tolls", label: "Tolls" },
-      { label: "Rate", value: r => Store.mileageRate(U.yearOf(r.date)) },
+      { label: "Rate", value: r => Store.mileageRateOn(r.date) },
       { label: "Est. Deduction", value: Store.tripDeduction },
       { label: "Reimbursable", value: r => r.reimbursable ? "Yes" : "No" },
       { label: "Reimbursed", value: r => r.reimbursed ? "Yes" : "No" },
@@ -121,13 +121,13 @@ Views.mileage = {
     const milesByM = months.map(mm => U.sum(d.mileage.filter(r => U.monthKey(r.date) === mm), r => r.miles));
 
     el.innerHTML = UI.pageHeader("Mileage & Vehicle",
-      `Business miles at $${t.mileageRate.toFixed(2)}/mi for ${year} (set rates in Settings). <strong>Commuting and personal miles are not business mileage</strong> — log business trips only.`,
+      `Business miles at ${t.mileageRateText} for ${year} (set rates in Settings). <strong>Commuting and personal miles are not business mileage</strong> — log business trips only.`,
       `<button class="btn" id="mi-export">⬇️ Export log</button>
        <button class="btn" id="mi-quick">⚡ Quick trip</button>
        <button class="btn btn-primary" id="mi-add">＋ Log Trip</button>`) + `
       <div class="stat-grid" style="grid-template-columns:repeat(auto-fill,minmax(170px,1fr))">
         ${UI.statCard({ label: `Business miles ${year}`, value: U.num(t.mileageMiles, 0), color: "amber" })}
-        ${UI.statCard({ label: "Est. mileage deduction", value: U.money(t.mileageDeduction), sub: `@ $${t.mileageRate.toFixed(2)}/mi — CPA confirms`, color: "green" })}
+        ${UI.statCard({ label: "Est. mileage deduction", value: U.money(t.mileageDeduction), sub: `@ ${t.mileageRateText} — CPA confirms`, color: "green" })}
         ${UI.statCard({ label: "Parking + tolls", value: U.money(U.sum(d.mileage, m => (Number(m.parking) || 0) + (Number(m.tolls) || 0))) })}
         ${UI.statCard({ label: "Substantiation score", value: sub.score + "%", sub: `${sub.complete}/${sub.total} trips fully documented`, color: sub.score >= 90 ? "green" : sub.score >= 70 ? "amber" : "red" })}
       </div>

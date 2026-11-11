@@ -25,8 +25,12 @@ No build, no install, no backend, no login:
 
 The app is a Progressive Web App (`manifest.webmanifest` + `sw.js`): host it anywhere over
 HTTPS, open the URL on your phone, and add it to the home screen — it then launches full-screen
-like a native app and works offline (service worker caches the app shell, network-first, so new
-deploys are picked up automatically on the next online launch).
+like a native app and works offline. The service worker caches the whole app when it installs
+and is network-first, so new deploys are picked up automatically on the next online launch — but
+it waits only four seconds for the page: on a weak signal at a loss site the app starts from its
+cached copy instead of a blank screen, and offers the update once it can reach the server. The
+cached copy is always one complete build: a new version replaces it only after every file has
+downloaded, so a download that breaks off half-way can't leave new and old files mixed.
 
 1. **Host it** — e.g. GitHub Pages: push this folder to a repo, enable Pages
    (Settings → Pages → deploy from branch). Netlify/Cloudflare Pages also work.
@@ -47,8 +51,10 @@ as an off-device backup with full history (every sync is a git commit).
 - **Setup (once per device):** create one fine-grained GitHub token (the Settings card walks
   you through it — token scoped to just the data repo, Contents read/write), then paste it
   into Settings on each device and hit *Turn on sync*.
-- **When it syncs:** on app open, a few seconds after every change, when the app regains
-  focus/network, and every 4 minutes while open. Tap the ☁️ in the mobile top bar to force one.
+- **When it syncs:** on app open, about a second after every change, when the app regains
+  focus/network, and on a 20-second check while open. That check is one tiny request ("has the
+  repo moved?"); the books are downloaded and merged only when something actually changed on
+  either side, or every five minutes as a safety net. Tap the ☁️ in the mobile top bar to force one.
 - **How conflicts resolve:** merged per record — the newest edit of each work order/expense/etc.
   wins; deletions on one device propagate to the others (tombstones). Nothing is ever
   overwritten wholesale.
@@ -56,7 +62,13 @@ as an off-device backup with full history (every sync is a git commit).
   does: a device turning sync on for the first time takes the synced profile, keeping only the
   changes made on it since (say, one tax assumption) when they're newer.
 - **Safety rails:** sync refuses to write to a public repo, and the token is stored only on
-  the device (never in JSON backups or the synced data).
+  the device (never in JSON backups or the synced data). A new or reset device that joins takes
+  the repo's business profile rather than overwriting it with blank defaults; turning sync on
+  with demo data loaded asks first; an expired token pauses sync (one notice, not a stream).
+- **Restore and erase with sync on:** *Restore from backup* makes the restored records the
+  newest copy, so the sync that follows keeps them (records added since the backup stay).
+  *Clear ALL data* erases this device only and turns sync off here — your other devices and the
+  repo keep their copy.
 
 ## First run
 
@@ -68,21 +80,59 @@ Clear it anytime: **Settings → Clear ALL data**, then start fresh.
 
 | Section | What it does |
 |---|---|
-| **Dashboard** | YTD income/expenses/net, **pending fees from work orders not yet invoiced**, tax reserve estimates, invoice aging, readiness scores, "what needs attention" — every item is tappable and lands where the fix is, including **side-by-side duplicate review** (compare both copies, delete the extra, or keep both) and **one-tap payment-record completion** for invoices marked paid without a date/method |
+| **Dashboard** | YTD income/expenses/net, **pending fees from work orders not yet invoiced**, tax reserve estimates, **tax-saving ideas still open**, invoice aging, readiness scores, "what needs attention" — every tile and every item is tappable and **opens its list filtered to exactly the records it counts** (tap *Pending Fees* and you see only the jobs awaiting an invoice), including **side-by-side duplicate review** (compare both copies, delete the extra, or keep both) and **one-tap payment-record completion** for invoices marked paid without a date/method |
 | **Work Orders** | Full forensic-engineering job tracker (claim/policy/CAT, insured, loss location, scope, fees, remittance) with **one-tap status changes** (tap the status badge in the list, or the status pipeline in the job detail — dates like report-submitted/invoice/payment are stamped automatically), due-date alerts, quick actions (add mileage/expense/receipt, create invoice, duplicate, export summary), **🧭 Directions** on every job (copies the loss address and opens Google Maps ready to drive), **mileage reimbursable per-mile or as a flat fee** (flows into invoices automatically), a per-job **Travel Deduction — IRS mileage or expenses** (asked the moment a job comes in, and again when it's paid if still unanswered; see below), filters that **stay set when you change a job's status**, and **hands-free status flow** — marking an invoice Sent moves the job to Invoiced; a paid invoice or matching income entry closes it — plus **📄 Import FCGA PDF**: drop an FCGA "Engineer Work Order Form" PDF and every field is parsed into a pre-filled work order (see below) |
 | **Clients** | Rates, terms, W-9/1099 flags, profitability, average payment time, 1099 reconciliation status |
 | **Invoices** | Flat/hourly billing + mileage & expense reimbursements, aging, partial payments, printable invoice, income reconciliation. Marking one paid (or closing its work order) fills the **payment date with that day and the method with ACH / Direct Deposit** unless you set them yourself, and **asks whether the job's travel counts as IRS mileage (the home-office round trip is logged for you) or as expenses** if the job hasn't said yet |
 | **Income** | All money in, 1099 tracking, **state sourcing** (which state's return each dollar belongs on — see below), and the **1099 Reconciliation tool** (compare 1099s received vs. recorded income) |
 | **Expenses** | Schedule C-style categories, business purpose, **receipt upload right on the expense form** (📷 Take photo / 📁 Choose file with preview) plus **one-tap 📎 Attach on every expense row/card** — no need to open the form; attached receipts open in a viewer from the list; business-use %, reimbursable tracking, CPA-review flags; and **expenses the Crew files in `CYxx\Receipts` are logged by Ledger with the receipt attached** (see below) |
-| **Mileage** | Field-optimized **⚡ Quick trip** logging, **automatic round trips on paid jobs you count as IRS mileage** (badged “Auto” — distance routed from your home base to the loss location), odometer support, per-year IRS rate, substantiation score, CSV log export |
+| **Mileage** | Field-optimized **⚡ Quick trip** logging, **automatic round trips on paid jobs you count as IRS mileage** (badged “Auto” — distance routed from your home base to the loss location), odometer support, the IRS rate by trip date (**2026 has two: 72.5¢ through June, 76¢ from July 1** — applied automatically unless you set your own rate), substantiation score, CSV log export |
 | **Receipts** | Attach photos/PDFs (stored locally in IndexedDB) or reference cloud/paper locations; missing-receipt report |
 | **Assets** | Equipment purchases flagged for depreciation / Section 179 CPA review |
 | **Home Office** | Square footage, simplified/actual-method inputs, CPA notes, and the house's **utility bills** (electric, gas, water, internet) with a month-by-month coverage grid and the office's share — organizer only; the bills never enter expenses |
 | **Contractors** | Payments, W-9 status, automatic $600 1099-NEC flagging (payments mirror into expenses) |
 | **Taxes** | Quarterly estimated payment tracker with due dates, configurable reserve percentages, year-end checklist, **year lock** |
+| **Tax Savings** | Every legal way to lower this year's taxable income that fits your books — ranked by what it's worth, each with the authority, the paperwork that makes it hold up, and the line not to cross (see below) |
 | **Reports** | 20+ printable reports incl. the **CPA Year-End Packet** and **IRS Audit-Readiness Packet** (Print → Save as PDF) |
 | **Audit Trail** | Field-level before/after history of every create/edit/delete |
 | **Settings** | Business profile (incl. office state + default field-work split), tax assumptions, mileage rates by year, JSON backup/restore, integrity check, duplicate review, paid-invoice payment-info completion, work-state backfill, mileage backfill for paid jobs, and the **app version + update check** |
+
+## Tax Savings — legal ways to lower taxable income
+
+**Tax & Assets → 💡 Tax Savings** (also the *Tax-Saving Ideas* dashboard tile). The page reads
+your books — profit so far, expense categories with nothing logged, jobs with no mileage, the
+home-office record, equipment, reimbursed expenses, jobs not yet invoiced — plus a short **tax
+profile** (bracket, filing status, age, retirement plan, health coverage, children, spouse) and
+lists what applies to you, biggest saving first.
+
+- **Three tiers, so you always know how hard a position is being pushed.** *Standard* — routine,
+  rarely questioned when documented. *Assertive* — clearly allowed, often missed, commonly looked
+  at: the paperwork is what wins. *Aggressive* — defensible, with real audit exposure; it holds
+  only if the facts and records are in place, and wants your CPA's sign-off first.
+- **Each idea shows** what it's worth at your rates (a real saving, a deferral to next year, or
+  "confirm it's already claimed"), what in your books triggered it, how to do it, **what makes it
+  hold up** on examination, **where the line is** (what would make it disallowed, penalised or
+  fraud), the authority (Code sections, regulations, IRS notices, cases), and the deadline with
+  days left. Mark each *Done*, *Planning it* or *Not for me*; the choices sync, and a mark made
+  on the phone isn't undone by a Settings change saved on the computer (or the other way round).
+- **What's in it:** solo 401(k) / SEP / cash-balance plan, HSA, health-premium deduction, the 20%
+  business-income deduction as an *engineering* practice, an S-corporation break-even computed
+  net of everything it costs, business taxes and loan interest on Schedule C, multi-state
+  credits, home office, every-mile mileage, per-diem meals, full equipment write-offs, December
+  timing moves, hiring your children, a spouse medical plan, client-reimbursed expenses that
+  aren't being deducted, and the everyday deductions with nothing logged.
+- **Protect what you're already claiming** lists the substantiation gaps in the same year —
+  missing receipts and purposes, incomplete trips — each opening the exact records.
+- **How far can a position be pushed?** A plain-language panel on the penalty standards
+  (reasonable basis → substantial authority → more likely than not), what records win an audit,
+  the never-do list, and the popular moves that don't work for a single-member LLC.
+- **🖨️ CPA discussion sheet** prints the open ideas with their numbers, authority and a
+  tick-box for your CPA.
+
+The dollar limits live in one table per tax year at the top of `js/taxideas.js` (2025 and 2026
+are in; add each new year when the IRS publishes it). The law and figures were checked against
+primary sources in November 2026 for a single-member Virginia PLLC filing Schedule C. Estimates
+are planning numbers from your profile, not a tax calculation — and none of it is tax advice.
 
 ## FCGA work order import
 
@@ -309,9 +359,13 @@ filter is still set, and the page keeps your place instead of jumping to the top
 survive switching pages and the *Sync & refresh* update, for as long as the app stays open.
 While filters are on, the record count reads *3 of 7 records* (so a record you just saved that
 the filters hide isn't a mystery); when they hide everything, the list says so; **✕ Clear**
-resets them. Links that take
-you somewhere to look at specific records (dashboard items, "Create invoice") open the list
-unfiltered, so an old filter can't hide what they point to.
+resets them. Links that take you somewhere to look at specific records — a dashboard tile, a
+"needs attention" line, a Tax Savings button — drop whatever filter was left from earlier and
+set the one that shows exactly those records ("Create invoice" opens the list unfiltered, so the
+new invoice is in view).
+
+Long lists draw 200 rows at a time (**Show 200 more** / **Show all** at the bottom); the count,
+search, filters and sort always cover every record.
 
 ## Searching on the phone
 
@@ -327,15 +381,17 @@ the desktop.
 `js/version.js` holds the build stamp, and it's the only place to bump it:
 
 ```js
-const APP_BUILD = { version: "2026.08.02-1", notes: "What changed." };
+const APP_BUILD = { version: "2026.11.10-1", notes: "What changed." };
 ```
 
 Bump it, then `git push` — that's the deploy. Every open copy of the app re-fetches that file in
 the background (on a timer, when you switch back to it, and when it comes back online). When the
 deployed stamp stops matching the running one, a banner offers **Sync & refresh**: it pushes this
-device's records, clears the caches, and reloads onto the new code. The banner disappears as soon
+device's records, clears the caches, and reloads onto the new code (if part of the download
+fails on a weak signal it says so and stays on the working version). The banner disappears as soon
 as the app is up to date, and confirms with “✓ Updated to …”. **Settings → App version** shows what
-you're running and checks on demand.
+you're running and checks on demand. The stamp is also how the service worker knows its offline
+copy is out of date — so bump it with every deploy.
 
 ## Data & backups
 
@@ -360,6 +416,7 @@ js/store.js           persistence, CRUD + audit trail, tax math, backup, Indexed
 js/charts.js          SVG bar/line/donut/score-ring/gauge charts
 js/ui.js              modals, toasts, form builder, list views
 js/alerts.js          attention engine + CPA/audit/health scores
+js/taxideas.js        Tax Savings engine: per-year limits, tax profile, the ideas
 js/update.js          “new version is ready” banner (polls js/version.js)
 js/demo.js            sample data
 js/views/*.js         one file per section
@@ -368,7 +425,13 @@ js/app.js             router, nav, quick-add, theme
 
 ## Yearly maintenance
 
-1. Each January: set the new **IRS standard mileage rate** in Settings (verify at irs.gov).
-2. Review reserve percentages with your CPA.
-3. At year-end: run the checklist on the Taxes page → export the **CPA packet** → export a
+1. Each January: check the new **IRS standard mileage rate** (irs.gov). Years left blank in
+   Settings use the published rate built into the app (`IRS_MILEAGE` in `js/store.js` — add the new
+   year there); a year the IRS changes mid-year gets a second rate "from Jul 1". The Tax Savings
+   page flags a rate that doesn't match.
+2. Each November: add the new year's limits to `LIMITS` in `js/taxideas.js`, and the Form 1099-NEC
+   threshold to `SCHEMA.nec1099Threshold` in `js/schemas.js` if it changed ($600 through 2025,
+   $2,000 for 2026, $2,100 for 2027).
+3. Review reserve percentages with your CPA.
+4. At year-end: run the checklist on the Taxes page → export the **CPA packet** → export a
    **JSON backup** → **lock the year**.

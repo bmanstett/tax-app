@@ -7,6 +7,6 @@
 "use strict";
 
 const APP_BUILD = {
-  version: "2026.10.20-2",
-  notes: "Home Office now logs the house's utility bills, plus this morning's duplicate, Settings and mileage fixes.",
+  version: "2026.11.10-1",
+  notes: "Dashboard tiles open just their records. New Tax Savings page. Faster lists, lighter sync, 2026 mileage rates.",
 };

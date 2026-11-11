@@ -14,11 +14,11 @@ const Assets = (() => {
     UI.openForm("asset", rec, {
       presets,
       onSave: vals => {
-        if (rec) Store.update("asset", rec.id, vals); else Store.add("asset", vals);
+        if (!(rec ? Store.update("asset", rec.id, vals) : Store.add("asset", vals))) return false;   // refused (a locked tax year — the notice says so): the form stays open with what was typed
         UI.toast(rec ? "Asset updated" : "Asset added", "success");
         App.rerender();
       },
-      deleteFn: r => { Store.remove("asset", r.id); UI.toast("Asset deleted"); App.rerender(); },
+      deleteFn: r => { if (Store.remove("asset", r.id)) UI.toast("Asset deleted"); App.rerender(); },
     });
   }
   return { openEditor };
@@ -97,13 +97,14 @@ const OfficeBills = (() => {
           vals.billMonth = "";
           UI.toast("Bill month should look like 2026-09 — left blank, so the bill date's month counts", "default", 5000);
         }
-        if (rec) Store.update("officeBill", rec.id, vals); else Store.add("officeBill", vals);
+        if (!(rec ? Store.update("officeBill", rec.id, vals) : Store.add("officeBill", vals))) return false;   // refused (a locked tax year — the notice says so): the form stays open with what was typed
         UI.toast(rec ? "Utility bill updated" : "Utility bill added", "success");
         App.rerender();
       },
       deleteFn: async r => {
+        // the record first: a locked year refuses, and then the bill's copy must stay
+        if (!Store.remove("officeBill", r.id)) { App.rerender(); return; }
         if (r.attachmentId) await Store.Attachments.delete(r.attachmentId).catch(() => {});
-        Store.remove("officeBill", r.id);
         UI.toast("Utility bill deleted");
         App.rerender();
       },
@@ -280,7 +281,7 @@ const Contractors = (() => {
         const rec = Store.get("contractor", c.id);
         const payments = [...(rec.payments || []), { id: U.uid("cp"), ...vals }];
         const patch = { payments };
-        if (U.sum(payments.filter(p => U.yearOf(p.date) === U.yearOf(vals.date)), p => p.amount) >= 600) patch.may1099 = true;
+        if (U.sum(payments.filter(p => U.yearOf(p.date) === U.yearOf(vals.date)), p => p.amount) >= SCHEMA.nec1099Threshold(U.yearOf(vals.date))) patch.may1099 = true;
         Store.update("contractor", c.id, patch);
         // mirror into expenses so it flows to Schedule C organizer
         Store.add("expense", {
@@ -308,7 +309,7 @@ const Contractors = (() => {
           <button class="btn btn-sm btn-primary" id="ct-edit">✏️ Edit</button>
           <button class="btn btn-sm" id="ct-pay">＋ Record payment</button>
         </div>
-        ${ytd >= 600 && !c.w9Received ? `<div class="disclaimer" style="margin:0 0 14px"><strong>⚠ ${U.money(ytd)} paid in ${year} with no W-9 on file.</strong> Collect the W-9 now — you'll likely need it for a 1099-NEC. Confirm filing requirements with your CPA.</div>` : ""}
+        ${ytd >= SCHEMA.nec1099Threshold(year) && !c.w9Received ? `<div class="disclaimer" style="margin:0 0 14px"><strong>⚠ ${U.money(ytd)} paid in ${year} with no W-9 on file.</strong> Collect the W-9 now — you'll likely need it for a 1099-NEC. Confirm filing requirements with your CPA.</div>` : ""}
         ${UI.detailGrid([
           ["Business", U.escapeHtml(c.businessName || "")],
           ["Email", U.escapeHtml(c.email || "")],
@@ -337,7 +338,8 @@ Views.contractors = {
     const year = App.viewYear();
     const S = Store.state;
     const totalPaid = U.sum(S.contractors, c => Contractors.paidYtd(c, year));
-    const need1099 = S.contractors.filter(c => Contractors.paidYtd(c, year) >= 600);
+    const nec = SCHEMA.nec1099Threshold(year);   // $600 through 2025, $2,000 for 2026 payments
+    const need1099 = S.contractors.filter(c => Contractors.paidYtd(c, year) >= nec);
     const noW9 = need1099.filter(c => !c.w9Received);
 
     el.innerHTML = UI.pageHeader("Contractors & 1099s",
@@ -345,7 +347,7 @@ Views.contractors = {
       `<button class="btn btn-primary" id="ct-add">＋ Add Contractor</button>`) + `
       <div class="stat-grid" style="grid-template-columns:repeat(auto-fill,minmax(170px,1fr))">
         ${UI.statCard({ label: `Paid to contractors ${year}`, value: U.money(totalPaid) })}
-        ${UI.statCard({ label: "Likely need 1099-NEC", value: String(need1099.length), sub: "$600+ paid — CPA confirms", color: need1099.length ? "amber" : "green" })}
+        ${UI.statCard({ label: "Likely need 1099-NEC", value: String(need1099.length), sub: `${U.money(nec, { cents: false })}+ paid in ${year} — CPA confirms`, color: need1099.length ? "amber" : "green" })}
         ${UI.statCard({ label: "Missing W-9", value: String(noW9.length), color: noW9.length ? "red" : "green" })}
       </div>
       <div id="ct-list"></div>`;
@@ -360,8 +362,8 @@ Views.contractors = {
         { label: "Contractor", value: c => c.name },
         { label: "Business", value: c => c.businessName || "—" },
         { label: `Paid ${year}`, html: c => `<strong>${U.money(Contractors.paidYtd(c, year))}</strong>`, sortVal: c => Contractors.paidYtd(c, year), num: true },
-        { label: "W-9", html: c => c.w9Received ? UI.badge("Received", "green") : UI.badge("Missing", Contractors.paidYtd(c, year) >= 600 ? "red" : "slate") },
-        { label: "1099 flag", html: c => Contractors.paidYtd(c, year) >= 600 || c.may1099 ? UI.badge("Review with CPA", "amber") : "—" },
+        { label: "W-9", html: c => c.w9Received ? UI.badge("Received", "green") : UI.badge("Missing", Contractors.paidYtd(c, year) >= nec ? "red" : "slate") },
+        { label: "1099 flag", html: c => Contractors.paidYtd(c, year) >= nec || c.may1099 ? UI.badge("Review with CPA", "amber") : "—" },
       ],
       defaultSort: { col: 2, dir: -1 },
       onRow: c => Contractors.openDetail(c),
@@ -373,7 +375,7 @@ Views.contractors = {
         <div class="record-card-sub">${U.escapeHtml(c.businessName || "")}</div>
         <div class="record-card-meta">
           ${c.w9Received ? UI.badge("W-9 ✓", "green") : UI.badge("No W-9", "red")}
-          ${Contractors.paidYtd(c, year) >= 600 ? UI.badge("1099 review", "amber") : ""}
+          ${Contractors.paidYtd(c, year) >= nec ? UI.badge("1099 review", "amber") : ""}
         </div>
       </div>`,
       empty: { icon: "👷", title: "No contractors", sub: "If you pay subs (drone pilots, drafters, admin help), track them here for 1099 season." },

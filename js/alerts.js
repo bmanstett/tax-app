@@ -7,13 +7,32 @@
 
 const Alerts = (() => {
 
+  /** An expense big enough (or equipment-like enough) to raise the depreciation / Sec. 179 question. */
+  function isLargeExpense(e) {
+    const amt = Number(e.amount) || 0;
+    return amt >= (Number(Store.state.settings.largeExpenseThreshold) || 2500) ||
+      (SCHEMA.assetLikeCategories.includes(e.category) && amt >= 1000);
+  }
+
   /** All substantiation / workflow checks for a tax year.
-      Each: {id, icon, title, sub, route, severity: 'bad'|'warn'|'info', weight, items[]} */
+      Each: {id, icon, title, sub, route, severity: 'bad'|'warn'|'info', weight, items[], list}
+      The dashboard needs these five times over for one draw (three scores, the attention
+      panel, the nav badge) — they're worked out once per draw and shared. Read-only. */
   function runChecks(year) {
+    return Store.cachedTurn("checks:" + Number(year), () => computeChecks(year));
+  }
+  function computeChecks(year) {
     const S = Store.state;
     const d = Store.yearData(year);
     const checks = [];
     const push = (c) => { c.count = c.items.length; checks.push(c); };
+    // list: the filters that show exactly a check's records on its page (see App.go's
+    // `lists`) — tapping "Expenses missing receipts" then opens just those expenses
+    const yr = String(year);
+    const expList = flag => ({ "exp-list": { filters: { yr, flag } } });
+    const incList = flag => ({ "inc-list": { filters: { yr, flag } } });
+    const woList = flag => ({ "wo-list": { filters: { flag } } });
+    const invList = status => ({ "inv-list": { filters: { status } } });
 
     /* --- Expenses --- */
     push({
@@ -21,44 +40,50 @@ const Alerts = (() => {
       title: "Expenses missing receipts",
       sub: "Attach or reference a receipt, or mark 'Not Required' for small items",
       items: d.expenses.filter(e => !e.receiptStatus || e.receiptStatus === "Missing"),
+      list: expList("noreceipt"),
     });
     push({
       id: "exp-missing-purpose", icon: "✍️", route: "expenses", severity: "bad", weight: 3,
       title: "Expenses missing a business purpose",
       sub: "IRS substantiation generally expects a documented business purpose",
       items: d.expenses.filter(e => !String(e.businessPurpose || "").trim()),
+      list: expList("nopurpose"),
     });
     push({
       id: "exp-uncategorized", icon: "🏷️", route: "expenses", severity: "bad", weight: 2,
       title: "Uncategorized expenses",
       sub: "Assign a Schedule C-style category for the CPA organizer",
       items: d.expenses.filter(e => !e.category),
+      list: expList("uncategorized"),
     });
     push({
       id: "exp-cpa-review", icon: "👀", route: "expenses", severity: "warn", weight: 1,
       title: "Expenses flagged for CPA review",
       sub: "Resolve or document these before year-end",
       items: d.expenses.filter(e => e.cpaReview),
+      list: expList("cpa"),
     });
     push({
       id: "exp-reimb-unbilled", icon: "↩️", route: "expenses", severity: "warn", weight: 2,
       title: "Reimbursable expenses not yet reimbursed",
       sub: "Add them to an invoice so you don't eat the cost",
       items: d.expenses.filter(e => e.reimbursable && !e.reimbursed),
+      list: expList("reimb"),
     });
     const threshold = Number(S.settings.largeExpenseThreshold) || 2500;
     push({
       id: "exp-large", icon: "💰", route: "expenses", severity: "info", weight: 1,
       title: `Large expenses (over ${U.money(threshold, { cents: false })}) — depreciation / Sec. 179 review`,
       sub: "Big equipment purchases may need to be capitalized — ask your CPA",
-      items: d.expenses.filter(e => (Number(e.amount) || 0) >= threshold ||
-        (SCHEMA.assetLikeCategories.includes(e.category) && (Number(e.amount) || 0) >= 1000)),
+      items: d.expenses.filter(isLargeExpense),
+      list: expList("large"),
     });
     push({
       id: "exp-double-dip", icon: "⚠️", route: "expenses", severity: "warn", weight: 2,
       title: "Reimbursed expenses still marked deductible",
       sub: "Deducting a reimbursed expense can double-count — CPA review",
       items: d.expenses.filter(e => e.reimbursable && e.reimbursed && e.deductible !== false),
+      list: expList("doubledip"),
     });
 
     /* --- Mileage --- */
@@ -67,6 +92,7 @@ const Alerts = (() => {
       title: "Mileage trips missing purpose or destination",
       sub: "IRS mileage substantiation expects date, miles, destination, and purpose",
       items: d.mileage.filter(m => !String(m.businessPurpose || "").trim() || !String(m.destination || "").trim()),
+      list: { "mi-list": { filters: { yr, flag: "incomplete" } } },
     });
 
     /* --- Income --- */
@@ -75,12 +101,14 @@ const Alerts = (() => {
       title: "Income not linked to an invoice or 1099 source",
       sub: "Link to an invoice/client or note the source for reconciliation",
       items: d.income.filter(i => !i.invoiceId && !i.is1099 && !i.clientId),
+      list: incList("unlinked"),
     });
     push({
       id: "inc-cpa-review", icon: "👀", route: "income", severity: "warn", weight: 1,
       title: "Income entries flagged for CPA review",
       sub: "",
       items: d.income.filter(i => i.cpaReview),
+      list: incList("cpa"),
     });
 
     /* --- Work orders / invoices --- */
@@ -90,6 +118,7 @@ const Alerts = (() => {
       title: "Reports submitted but not invoiced",
       sub: "Create the invoice so revenue isn't missed",
       items: wos.filter(w => w.status === "Submitted"),
+      list: woList("unbilled"),
     });
     push({
       id: "wo-travel-choice", icon: "🚗", route: "workorders", action: "travel-choice", severity: "warn", weight: 1,
@@ -103,18 +132,21 @@ const Alerts = (() => {
       sub: "",
       items: wos.filter(w => SCHEMA.woOpenStatuses.includes(w.status) &&
         w.reportDueDate && U.daysFromToday(w.reportDueDate) < 0),
+      list: woList("overdue"),
     });
     push({
       id: "inv-overdue", icon: "🔴", route: "invoices", severity: "bad", weight: 2,
       title: "Overdue invoices",
       sub: "Follow up on payment",
       items: S.invoices.filter(Store.invoiceIsOverdue),
+      list: invList("pastdue"),
     });
     push({
       id: "inv-unpaid", icon: "🧾", route: "invoices", severity: "info", weight: 1,
       title: "Invoices sent, awaiting payment",
       sub: "",
       items: S.invoices.filter(i => ["Sent", "Partial"].includes(i.status) && Store.invoiceBalance(i) > 0.005 && !Store.invoiceIsOverdue(i)),
+      list: invList("awaiting"),
     });
     push({
       id: "inv-paid-missing-info", icon: "❓", route: "invoices", action: "paid-missing-info", severity: "warn", weight: 1,
@@ -129,6 +161,7 @@ const Alerts = (() => {
       title: "Income not sourced to a state",
       sub: "Set the field state on the work order (or the payment) so your CPA can file the right state returns",
       items: d.income.filter(i => !Store.incomeStateSplit(i).length),
+      list: incList("nostate"),
     });
     // a job with a loss address but no field state silently sources 100% to the office
     // state — which is wrong whenever the inspection was actually out of state
@@ -145,16 +178,17 @@ const Alerts = (() => {
       title: "Assets awaiting depreciation / Section 179 review",
       sub: "Bring these to your CPA at year-end",
       items: S.assets.filter(a => a.askCpaDepreciation && ["Not Reviewed", "Sent to CPA"].includes(a.depreciationStatus || "Not Reviewed")),
+      list: { "as-list": { filters: { depr: "pending" } } },
     });
 
     /* --- Contractors --- */
     push({
       id: "ctr-1099", icon: "👷", route: "contractors", severity: "warn", weight: 2,
       title: "Contractor payments that may require a 1099-NEC",
-      sub: "Generally $600+ per year for services — confirm with CPA; collect W-9s",
+      sub: `${U.money(SCHEMA.nec1099Threshold(year), { cents: false })} or more paid for services in ${year} — confirm with CPA; collect W-9s`,
       items: S.contractors.filter(c => {
         const paid = U.sum((c.payments || []).filter(p => U.yearOf(p.date) === Number(year)), p => p.amount);
-        return paid >= 600 && !c.w9Received;
+        return paid >= SCHEMA.nec1099Threshold(year) && !c.w9Received;
       }),
     });
 
@@ -227,7 +261,7 @@ const Alerts = (() => {
     for (const c of S.clients) {
       const incomeTotal = U.sum(S.income.filter(i => i.clientId === c.id && U.yearOf(i.date) === Number(year) && i.is1099), i => i.amount);
       const rec = S.form1099s.find(f => f.clientId === c.id && Number(f.taxYear) === Number(year));
-      const expected = c.expects1099 || incomeTotal >= 600;
+      const expected = c.expects1099 || incomeTotal >= SCHEMA.nec1099Threshold(year);
       if (!expected && !rec && incomeTotal === 0) continue;
       const amountReceived = rec ? Number(rec.amountReceived) || 0 : 0;
       rows.push({
@@ -275,7 +309,7 @@ const Alerts = (() => {
       const per = c.severity === "bad" ? 4 : c.severity === "warn" ? 2.5 : 1.5;
       const p = Math.min(c.count * per * (c.weight || 1), 24);
       penalty += p;
-      detail.push({ id: c.id, title: c.title, count: c.count, penalty: U.round2(p), severity: c.severity, route: c.route, action: c.action });
+      detail.push({ id: c.id, title: c.title, count: c.count, penalty: U.round2(p), severity: c.severity, route: c.route, action: c.action, list: c.list });
     }
     // With almost no data, a perfect score is misleading — floor it informatively
     let score = Math.max(0, Math.round(100 - penalty));
@@ -286,7 +320,7 @@ const Alerts = (() => {
   /** Items for the "needs attention" panel, most severe first. */
   function attention(year) {
     const sevRank = { bad: 0, warn: 1, info: 2 };
-    return U.sortBy(runChecks(year).filter(c => c.count > 0), c => sevRank[c.severity] * 100 - c.count, 1);
+    return U.sortBy(runChecks(year).filter(c => c.count > 0), c => sevRank[c.severity] * 1e9 - c.count, 1);
   }
 
   /** Mileage substantiation score (per requirement #8). */
@@ -297,5 +331,5 @@ const Alerts = (() => {
     return { score: Math.round(complete / trips.length * 100), complete, total: trips.length };
   }
 
-  return { runChecks, attention, cpaScore, auditScore, healthScore, mileageScore, reconcile1099 };
+  return { runChecks, attention, cpaScore, auditScore, healthScore, mileageScore, reconcile1099, isLargeExpense };
 })();

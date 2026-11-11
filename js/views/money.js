@@ -40,12 +40,12 @@ const Income = (() => {
     UI.openForm("income", rec, {
       presets,
       onSave: vals => {
-        if (rec) Store.update("income", rec.id, vals); else Store.add("income", vals);
+        if (!(rec ? Store.update("income", rec.id, vals) : Store.add("income", vals))) return false;   // refused (a locked tax year — the notice says so): the form stays open with what was typed
         UI.toast(rec ? "Income updated" : "Income added", "success");
         reconcileInvoice(vals.invoiceId, vals);
         App.rerender();
       },
-      deleteFn: r => { Store.remove("income", r.id); UI.toast("Income deleted"); App.rerender(); },
+      deleteFn: r => { if (Store.remove("income", r.id)) UI.toast("Income deleted"); App.rerender(); },
     });
   }
 
@@ -160,6 +160,14 @@ Views.income = {
           options: () => [...new Set(Store.all("income").flatMap(r => Store.incomeStateSplit(r).map(p => p.state)))].sort()
             .map(c => ({ value: c, label: `${c} — ${SCHEMA.stateName(c)}` })),
           apply: (r, v) => Store.incomeStateSplit(r).some(p => p.state === v) },
+        { id: "flag", label: "Flag", options: [
+            { value: "unlinked", label: "Not linked to an invoice or client" },
+            { value: "nostate", label: "Needs a state" },
+            { value: "cpa", label: "CPA review" },
+          ],
+          apply: (r, v) => v === "unlinked" ? (!r.invoiceId && !r.is1099 && !r.clientId)
+            : v === "nostate" ? !Store.incomeStateSplit(r).length
+            : !!r.cpaReview },
       ],
       columns: [
         { label: "Date", value: r => U.fmtDate(r.date), sortVal: r => r.date || "" },
@@ -205,13 +213,16 @@ const Expenses = (() => {
     UI.openForm("expense", rec, {
       presets,
       onSave: vals => {
-        if (rec) Store.update("expense", rec.id, vals); else Store.add("expense", vals);
+        if (!(rec ? Store.update("expense", rec.id, vals) : Store.add("expense", vals))) return false;   // refused (a locked tax year — the notice says so): the form stays open with what was typed
         UI.toast(rec ? "Expense updated" : "Expense added", "success");
         App.rerender();
       },
       deleteFn: async r => {
-        if (r.attachmentId) await Store.Attachments.delete(r.attachmentId).catch(() => {});
-        Store.remove("expense", r.id); UI.toast("Expense deleted"); App.rerender();
+        // the record first: a locked year refuses (Store says so), and then the receipt must stay
+        const attId = (Store.get("expense", r.id) || r).attachmentId;
+        if (!Store.remove("expense", r.id)) { App.rerender(); return; }
+        if (attId) await Store.Attachments.delete(attId).catch(() => {});
+        UI.toast("Expense deleted"); App.rerender();
       },
     });
   }
@@ -228,11 +239,18 @@ const Expenses = (() => {
       if (!file) return;
       try {
         const dataUrl = await Store.Attachments.fileToDataUrl(file);
-        const attId = exp.attachmentId || U.uid("att");
+        // always a new id — a file stored under the old one never reaches the other device (see ui.js)
+        const attId = U.uid("att");
+        const old = (Store.get("expense", exp.id) || exp).attachmentId;
         await Store.Attachments.put({ id: attId, name: file.name, type: file.type, dataUrl });
         const patch = { attachmentId: attId, attachmentName: file.name };
         if (!exp.receiptStatus || exp.receiptStatus === "Missing" || exp.receiptStatus === "Referenced") patch.receiptStatus = "Attached";
-        Store.update("expense", exp.id, patch);
+        if (!Store.update("expense", exp.id, patch)) {   // refused — a locked tax year
+          await Store.Attachments.delete(attId).catch(() => {});
+          UI.toast("Not attached — this expense is in a locked tax year (unlock it on the Taxes page)", "error", 5500);
+          return;
+        }
+        if (old && old !== attId) Store.Attachments.delete(old).catch(() => {});
         UI.toast(`Receipt attached — ${exp.vendor || "expense"}`, "success");
         App.rerender();
       } catch (err) { UI.toast("Couldn't store the file: " + err.message, "error", 5000); }
@@ -321,15 +339,18 @@ Views.expenses = {
             { value: "noreceipt", label: "Missing receipt" }, { value: "nopurpose", label: "Missing purpose" },
             { value: "uncategorized", label: "Uncategorized" }, { value: "cpa", label: "CPA review" },
             { value: "reimb", label: "Reimbursable, unbilled" }, { value: "partial", label: "Partial business use" },
+            { value: "large", label: "Large / equipment (depreciation review)" },
+            { value: "doubledip", label: "Reimbursed but still deductible" },
           ],
-          apply: (r, v) => ({
-            noreceipt: !r.receiptStatus || r.receiptStatus === "Missing",
-            nopurpose: !String(r.businessPurpose || "").trim(),
-            uncategorized: !r.category,
-            cpa: !!r.cpaReview,
-            reimb: r.reimbursable && !r.reimbursed,
-            partial: (Number(r.businessUsePct) || 100) < 100,
-          }[v]) },
+          apply: (r, v) => v === "noreceipt" ? (!r.receiptStatus || r.receiptStatus === "Missing")
+            : v === "nopurpose" ? !String(r.businessPurpose || "").trim()
+            : v === "uncategorized" ? !r.category
+            : v === "cpa" ? !!r.cpaReview
+            : v === "reimb" ? !!(r.reimbursable && !r.reimbursed)
+            : v === "partial" ? (Number(r.businessUsePct) || 100) < 100
+            : v === "large" ? Alerts.isLargeExpense(r)
+            : v === "doubledip" ? !!(r.reimbursable && r.reimbursed && r.deductible !== false)
+            : true },
       ],
       columns: [
         { label: "Date", value: r => U.fmtDate(r.date), sortVal: r => r.date || "" },
@@ -370,13 +391,15 @@ const Receipts = (() => {
     UI.openForm("receipt", rec, {
       presets,
       onSave: vals => {
-        if (rec) Store.update("receipt", rec.id, vals); else Store.add("receipt", vals);
+        if (!(rec ? Store.update("receipt", rec.id, vals) : Store.add("receipt", vals))) return false;   // refused (a locked tax year — the notice says so): the form stays open with what was typed
         UI.toast(rec ? "Receipt updated" : "Receipt saved", "success");
         App.rerender();
       },
       deleteFn: async r => {
-        if (r.attachmentId) await Store.Attachments.delete(r.attachmentId).catch(() => {});
-        Store.remove("receipt", r.id); UI.toast("Receipt deleted"); App.rerender();
+        const attId = (Store.get("receipt", r.id) || r).attachmentId;
+        if (!Store.remove("receipt", r.id)) { App.rerender(); return; }
+        if (attId) await Store.Attachments.delete(attId).catch(() => {});
+        UI.toast("Receipt deleted"); App.rerender();
       },
     });
   }

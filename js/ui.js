@@ -36,19 +36,26 @@ const UI = (() => {
     root.appendChild(backdrop);
     document.body.style.overflow = "hidden";
 
+    let closed = false;
     const api = {
       el: backdrop,
       body: backdrop.querySelector(".modal-body"),
       footerEl: backdrop.querySelector(".modal-footer"),
       close() {
+        if (closed) return;
+        closed = true;
         backdrop.remove();
+        // however it was closed, let go of the Escape listener — it used to stay on the
+        // document unless Escape itself did the closing, holding on to every closed
+        // dialog (and any receipt image shown in it) for as long as the app stayed open
+        document.removeEventListener("keydown", escHandler);
         if (!root.children.length) document.body.style.overflow = "";
         if (onClose) onClose();
       },
     };
+    const escHandler = e => { if (e.key === "Escape" && root.lastElementChild === backdrop) api.close(); };
     backdrop.querySelector(".modal-close").addEventListener("click", api.close);
     backdrop.addEventListener("mousedown", e => { if (e.target === backdrop) api.close(); });
-    const escHandler = e => { if (e.key === "Escape" && root.lastElementChild === backdrop) { api.close(); document.removeEventListener("keydown", escHandler); } };
     document.addEventListener("keydown", escHandler);
     return api;
   }
@@ -72,7 +79,8 @@ const UI = (() => {
         });
       }
       m.footerEl.querySelector("#cf-no").addEventListener("click", () => m.close());
-      m.footerEl.querySelector("#cf-yes").addEventListener("click", () => { resolve(true); m.el.remove(); if (!document.getElementById("modal-root").children.length) document.body.style.overflow = ""; });
+      // resolve first: close() also runs onClose → resolve(false), which is then a no-op
+      m.footerEl.querySelector("#cf-yes").addEventListener("click", () => { resolve(true); m.close(); });
     });
   }
 
@@ -80,9 +88,11 @@ const UI = (() => {
   const badge = (text, color = "slate") => `<span class="badge badge-${color}">${U.escapeHtml(text)}</span>`;
   const statusBadge = (list, value) => value ? badge(value, SCHEMA.statusColor(list, value)) : "";
 
-  function statCard({ label, value, sub, color, onClickRoute, icon }) {
+  /** link: the key of a list preset the page registered (see Views.dashboard) — the tile
+      then opens its page filtered to exactly the records it counts. */
+  function statCard({ label, value, sub, color, onClickRoute, icon, link }) {
     const accent = color ? `<div class="stat-accent" style="background:var(--${color})"></div>` : "";
-    return `<div class="stat-card ${onClickRoute ? "clickable" : ""}" ${onClickRoute ? `data-route="${onClickRoute}"` : ""}>
+    return `<div class="stat-card ${onClickRoute ? "clickable" : ""}" ${onClickRoute ? `data-route="${onClickRoute}"${link ? ` data-link="${U.escapeHtml(link)}"` : ""} role="link" tabindex="0"` : ""}>
       ${accent}
       <div class="stat-label">${icon ? icon + " " : ""}${U.escapeHtml(label)}</div>
       <div class="stat-value">${value}</div>
@@ -277,7 +287,10 @@ const UI = (() => {
       });
     }
 
-    m.footerEl.querySelector("#form-save").addEventListener("click", async () => {
+    const saveBtn = m.footerEl.querySelector("#form-save");
+    let saving = false;
+    saveBtn.addEventListener("click", async () => {
+      if (saving) return;   // a second tap while the photo is still being stored used to save the record twice
       // collect + coerce
       form.querySelectorAll("[data-key]").forEach(input => {
         const key = input.getAttribute("data-key");
@@ -310,11 +323,18 @@ const UI = (() => {
       delete out._file;
 
       // attach file if present (receipts)
+      let replacedAtt = "", storedAtt = "";
+      const saveLabel = saveBtn.textContent;
       if (pendingFile) {
+        saving = true; saveBtn.disabled = true; saveBtn.textContent = "Saving…";
         try {
           const dataUrl = await Store.Attachments.fileToDataUrl(pendingFile);
-          const attId = (record && record.attachmentId) || U.uid("att");
+          // Always a new id: sync tells attachments apart by id alone, so a replacement stored
+          // under the old id never reached the other device or the backup repo.
+          const attId = U.uid("att");
+          replacedAtt = (record && record.attachmentId) || "";
           await Store.Attachments.put({ id: attId, name: pendingFile.name, type: pendingFile.type, dataUrl });
+          storedAtt = attId;
           out.attachmentId = attId;
           out.attachmentName = pendingFile.name;
           if (out.status === "Missing" || out.status === "Referenced") out.status = "Attached";
@@ -322,8 +342,18 @@ const UI = (() => {
         } catch (e) { toast("Couldn't store the file: " + e.message, "error", 5000); }
       }
       // an onSave that returns false couldn't save (it says why): the form stays open with what was typed
-      if (opts.onSave && opts.onSave(out, m) === false) return;
+      if (opts.onSave && opts.onSave(out, m) === false) {
+        // the photo was stored for a save that didn't happen — the next try stores it again
+        if (storedAtt) Store.Attachments.delete(storedAtt).catch(() => {});
+        saving = false; saveBtn.disabled = false; saveBtn.textContent = saveLabel;
+        return;
+      }
       m.close();
+      // the file this one replaced is no longer pointed at — dropped only once the save really took
+      if (replacedAtt && record && SCHEMA.entities[entityType]) {
+        const now = Store.get(entityType, record.id);
+        if (now && now.attachmentId === out.attachmentId) Store.Attachments.delete(replacedAtt).catch(() => {});
+      }
     });
 
     return m;
@@ -461,6 +491,42 @@ const UI = (() => {
      id), and in sessionStorage so the "Sync & refresh" reload keeps them too. */
   const LV_STATE_KEY = "anstett_list_state";
   const listMemory = {};
+  const lvDocClicks = [];   // [{container, fn}] — each drawn list's document-level click listener
+
+  /* A list draws one page of rows at a time, in one layout. It used to build a table row
+     AND a phone card for every record on every draw (the stylesheet then hid one) — on
+     a few thousand expenses that was tens of thousands of elements for each keystroke
+     in the search box and each background sync. The count, search, filters and sort
+     still cover every record; "Show more" unfolds the rest (and "Show all" is there for
+     Ctrl+F or printing a long list).
+
+     Which layout: the same 900px line styles.css draws between tables and cards. The
+     stylesheet always shows a list's only layout whichever side of the line the screen
+     is on (see ".hide-mobile-table:has"), so being out of step for a moment — a rotation,
+     a print preview — shows the other layout rather than nothing; lists on screen are
+     redrawn when the line is crossed. Browsers without :has() get both layouts, as before. */
+  const LV_PAGE = 200;
+  const LV_MOBILE = window.matchMedia ? matchMedia("(max-width: 900px)") : null;
+  const LV_ONE_LAYOUT = !!(LV_MOBILE && window.CSS && CSS.supports && CSS.supports("selector(:has(*))"));
+  const wantCards = () => LV_MOBILE.matches;
+  const liveLists = new Set();   // {container, redraw} — the lists on screen
+  let cardsDrawn = LV_ONE_LAYOUT ? wantCards() : false;
+  let lvPrinting = false;   // while printing: both layouts and every row, so the print stylesheet chooses as it always did
+  const redrawLive = () => { for (const l of [...liveLists]) { if (l.container.isConnected) l.redraw(); else liveLists.delete(l); } };
+  const onLayoutSwap = () => {
+    if (wantCards() === cardsDrawn) return;
+    cardsDrawn = wantCards();
+    redrawLive();
+  };
+  window.addEventListener("beforeprint", () => { lvPrinting = true; redrawLive(); });
+  window.addEventListener("afterprint", () => { lvPrinting = false; redrawLive(); });
+  if (LV_ONE_LAYOUT) {
+    if (LV_MOBILE.addEventListener) LV_MOBILE.addEventListener("change", onLayoutSwap);
+    else if (LV_MOBILE.addListener) LV_MOBILE.addListener(onLayoutSwap);
+    // belt and braces: a rotation or resize that happened while the app was in the background
+    window.addEventListener("resize", onLayoutSwap);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) onLayoutSwap(); });
+  }
   function storedListState(key) {
     try { return (JSON.parse(sessionStorage.getItem(LV_STATE_KEY)) || {})[key] || null; } catch (e) { return null; }
   }
@@ -482,29 +548,40 @@ const UI = (() => {
   /** A new page is being drawn (not a refresh of this one): close any open filter-chip
       panel, which should only survive a background refresh of the page it's on. */
   function closeListPanels() {
-    for (const s of Object.values(listMemory)) s.openMulti = null;
+    for (const s of Object.values(listMemory)) { s.openMulti = null; s.limit = LV_PAGE; }   // …and it starts at one page of rows
   }
 
-  /* Set while a deep link (a dashboard item, "go see the new invoice") draws its page:
-     the lists there start unfiltered, so a filter left from earlier can't hide the very
-     records the link was meant to show. Everyday navigation keeps the filters. */
+  /* Set while a deep link (a dashboard tile, "go see the new invoice") draws its page:
+     whatever filters were left from earlier are dropped, so they can't hide the very
+     records the link was meant to show — and the link's own filters (presets, keyed by
+     list: {"wo-list": {filters: {flag: "pending"}}}) go on instead, so a tile that counts
+     three work orders opens a list of exactly those three. Everyday navigation keeps the
+     filters it finds. */
   let listsFresh = false;
-  function withFreshLists(fn) {
+  let listPresets = null;
+  function withFreshLists(fn, presets) {
     listsFresh = true;
-    try { return fn(); } finally { listsFresh = false; }
+    listPresets = presets || null;
+    try { return fn(); } finally { listsFresh = false; listPresets = null; }
   }
 
-  /** Fresh list state, carrying over whatever the last copy of this list had set —
-      checked against the current filters and columns, so nothing stale sneaks in. */
+  /** Fresh list state, carrying over whatever the last copy of this list had set (or,
+      on a deep link, what the link asked for) — checked against the current filters and
+      columns, so nothing stale sneaks in. */
   function initListState(key, cfg) {
-    const prev = key && !listsFresh ? (listMemory[key] || storedListState(key)) : null;
-    const s = { q: "", filters: {}, labels: {}, openMulti: null, sortCol: cfg.defaultSort ? cfg.defaultSort.col : 0, sortDir: cfg.defaultSort ? cfg.defaultSort.dir : -1 };
+    const prev = !key ? null
+      : listsFresh ? ((listPresets && listPresets[key]) || null)
+      : (listMemory[key] || storedListState(key));
+    const s = { q: "", filters: {}, labels: {}, openMulti: null, limit: LV_PAGE, sortCol: cfg.defaultSort ? cfg.defaultSort.col : 0, sortDir: cfg.defaultSort ? cfg.defaultSort.dir : -1 };
     if (!prev) return s;
     if (typeof prev.q === "string") s.q = prev.q;
+    // rows already unfolded with "Show more" stay unfolded through a redraw of the page
+    if (prev.limit > LV_PAGE) s.limit = prev.limit;
     for (const f of cfg.filters || []) {
       const v = prev.filters ? prev.filters[f.id] : undefined;
       if (f.multi && Array.isArray(v)) s.filters[f.id] = v.map(String);
-      else if (!f.multi && typeof v === "string") s.filters[f.id] = v;
+      else if (f.multi && (typeof v === "string" || typeof v === "number") && v !== "") s.filters[f.id] = [String(v)];
+      else if (!f.multi && (typeof v === "string" || typeof v === "number")) s.filters[f.id] = String(v);
       const names = prev.labels && prev.labels[f.id];
       if (names && typeof names === "object") s.labels[f.id] = { ...names };
     }
@@ -649,7 +726,13 @@ const UI = (() => {
       if (!container.isConnected) { document.removeEventListener("click", onDocClick); return; }
       if (stateLV.openMulti && !e.target.closest(".lv-multifilter")) { stateLV.openMulti = null; if (renderToolbar()) renderResults(); }
     }
+    // lists that have left the screen drop theirs now (each used to linger until the next tap
+    // anywhere, holding the old page's rows — and whatever its config had captured)
+    for (let i = lvDocClicks.length - 1; i >= 0; i--) {
+      if (!lvDocClicks[i].container.isConnected) { document.removeEventListener("click", lvDocClicks[i].fn); lvDocClicks.splice(i, 1); }
+    }
     document.addEventListener("click", onDocClick);
+    lvDocClicks.push({ container, fn: onDocClick });
 
     function rows() {
       let rs = cfg.data();
@@ -687,6 +770,7 @@ const UI = (() => {
       const live = toolbarEl.querySelector("[data-lv-search]");
       if (live) live.value = "";   // the rebuilt box is seeded from this one
       stateLV.q = ""; stateLV.filters = {}; stateLV.openMulti = null;
+      stateLV.limit = LV_PAGE;
       render();
     }
 
@@ -757,13 +841,14 @@ const UI = (() => {
         if (!search.isConnected) return;   // the toolbar was redrawn meanwhile and took this text with it
         if (search.value === stateLV.q) return;
         stateLV.q = search.value;
+        stateLV.limit = LV_PAGE;   // a new search starts from the top
         renderResults();
       }, 120));
       NumBar.attach(search);
       if (hadFocus) { search.focus(); search.setSelectionRange(search.value.length, search.value.length); }
 
       toolbarEl.querySelectorAll("[data-filter]").forEach(sel => sel.addEventListener("change", e => {
-        stateLV.filters[sel.getAttribute("data-filter")] = e.target.value; render();
+        stateLV.filters[sel.getAttribute("data-filter")] = e.target.value; stateLV.limit = LV_PAGE; render();
       }));
       toolbarEl.querySelectorAll("[data-mf-toggle]").forEach(btn => btn.addEventListener("click", () => {
         const id = btn.getAttribute("data-mf-toggle");
@@ -776,10 +861,12 @@ const UI = (() => {
         const cur = new Set(stateLV.filters[id] || []);
         cur.has(val) ? cur.delete(val) : cur.add(val);
         stateLV.filters[id] = [...cur];
+        stateLV.limit = LV_PAGE;
         render();
       }));
       toolbarEl.querySelectorAll("[data-mf-all]").forEach(btn => btn.addEventListener("click", () => {
         stateLV.filters[btn.getAttribute("data-mf-all")] = [];
+        stateLV.limit = LV_PAGE;
         render();
       }));
       paintSlots();
@@ -788,6 +875,7 @@ const UI = (() => {
 
     /** The rows (table + cards, or the empty state), plus the record count and
         the Clear button in the toolbar — everything that depends on the search. */
+    let drawn = [];   // the rows now on screen, in order — what a tapped data-row index refers to
     function renderResults() {
       const rs = rows();
       // filters stick around, so say so when they're what's hiding everything
@@ -801,6 +889,11 @@ const UI = (() => {
       };
       paintSlots();
 
+      // one page of rows (a prefix of rs, so a row's index is the same in both)
+      drawn = rs.length > stateLV.limit && !lvPrinting ? rs.slice(0, stateLV.limit) : rs;
+      const more = rs.length - drawn.length;
+      const cards = LV_ONE_LAYOUT && !lvPrinting ? (cardsDrawn = wantCards()) : null;   // null: draw both, the stylesheet picks
+
       resultsEl.innerHTML = rs.length === 0 ? (hidden ? `<div class="empty-state">
             <div class="es-icon">🔍</div>
             <div class="es-title">Nothing matches these filters</div>
@@ -808,41 +901,55 @@ const UI = (() => {
             <button type="button" class="btn" data-lv-clear>✕ Clear filters</button>
           </div>` : emptyState(cfg.empty || {})) : `
         <div class="hide-mobile-table">
-          <div class="table-wrap"><table class="data-table">
+          ${cards === true ? "" : `<div class="table-wrap"><table class="data-table">
             <thead><tr>${cfg.columns.map((c, i) => `
               <th data-col="${i}" class="${c.num ? "num" : ""}">${U.escapeHtml(c.label)}
                 ${stateLV.sortCol === i ? `<span class="sort-arrow">${stateLV.sortDir > 0 ? "▲" : "▼"}</span>` : ""}</th>`).join("")}
             </tr></thead>
-            <tbody>${rs.map((r, ri) => `
+            <tbody>${drawn.map((r, ri) => `
               <tr data-row="${ri}" class="${cfg.rowClass ? cfg.rowClass(r) : ""}">
                 ${cfg.columns.map(c => `<td class="${c.num ? "num" : ""}">${c.html ? c.html(r) : U.escapeHtml(String(c.value ? c.value(r) : ""))}</td>`).join("")}
               </tr>`).join("")}</tbody>
-          </table></div>
-          <div class="record-cards">${rs.map((r, ri) => `<div data-row="${ri}">${cfg.card ? cfg.card(r) : defaultCard(cfg, r)}</div>`).join("")}</div>
+          </table></div>`}
+          ${cards === false ? "" : `<div class="record-cards">${drawn.map((r, ri) => `<div data-row="${ri}">${cfg.card ? cfg.card(r) : defaultCard(cfg, r)}</div>`).join("")}</div>`}
+          ${more > 0 ? `<div class="lv-more no-print">
+            <span>Showing the first ${drawn.length} of ${rs.length} — search or filter to narrow them down, or</span>
+            <button type="button" class="btn btn-sm" data-lv-more>Show ${Math.min(more, LV_PAGE)} more</button>
+            <button type="button" class="btn btn-sm btn-ghost" data-lv-all>Show all ${rs.length}</button>
+          </div>` : ""}
         </div>`;
 
       if (stateKey) storeListState(stateKey, stateLV);   // after the toolbar's labels are current
+    }
 
-      // wire
-      resultsEl.querySelectorAll("[data-lv-clear]").forEach(btn => btn.addEventListener("click", clearAll));
-      resultsEl.querySelectorAll("th[data-col]").forEach(th => th.addEventListener("click", () => {
+    // One listener for everything in the results, however many rows there are (they used
+    // to get one each, per layout, on every draw).
+    resultsEl.addEventListener("click", e => {
+      const t = e.target;
+      if (t.closest("[data-lv-clear]")) { clearAll(); return; }
+      if (t.closest("[data-lv-more]")) { stateLV.limit += LV_PAGE; renderResults(); return; }
+      if (t.closest("[data-lv-all]")) { stateLV.limit = Number.MAX_SAFE_INTEGER; renderResults(); return; }
+      const th = t.closest("th[data-col]");
+      if (th) {
         const i = Number(th.getAttribute("data-col"));
         if (stateLV.sortCol === i) stateLV.sortDir *= -1; else { stateLV.sortCol = i; stateLV.sortDir = -1; }
+        stateLV.limit = LV_PAGE;
         renderResults();
-      }));
-      if (cfg.onRow) resultsEl.querySelectorAll("[data-row]").forEach(el => el.addEventListener("click", e => {
-        if (e.target.closest("[data-lv-stop]")) return; // in-row action controls handle their own clicks
-        cfg.onRow(rs[Number(el.getAttribute("data-row"))]);
-      }));
-      if (cfg.empty && cfg.empty.actionId && cfg.empty.onAction) {
-        const btn = resultsEl.querySelector(`#${cfg.empty.actionId}`);
-        if (btn) btn.addEventListener("click", cfg.empty.onAction);
+        return;
       }
-    }
+      if (cfg.empty && cfg.empty.actionId && cfg.empty.onAction && t.closest("#" + CSS.escape(cfg.empty.actionId))) { cfg.empty.onAction(e); return; }
+      if (!cfg.onRow || t.closest("[data-lv-stop]")) return;   // in-row action controls handle their own clicks
+      const row = t.closest("[data-row]");
+      if (row && resultsEl.contains(row)) { const r = drawn[Number(row.getAttribute("data-row"))]; if (r) cfg.onRow(r); }
+    });
 
     function render() { renderToolbar(); renderResults(); }
 
     render();
+    {
+      for (const l of [...liveLists]) if (!l.container.isConnected) liveLists.delete(l);   // lists that have left the screen
+      liveLists.add({ container, redraw: renderResults });
+    }
     return { refresh: render };
   }
 
