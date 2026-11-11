@@ -400,8 +400,7 @@ Views.settings = {
       const json = await Store.exportJSON(true);
       U.download(`anstett-books-backup-${U.todayISO()}.json`, json);
       Store.markBackedUp();
-      const yc = Store.state.yearChecklists[String(App.viewYear())] = Store.state.yearChecklists[String(App.viewYear())] || {};
-      yc.backup = true; Store.save();
+      Store.setYearCheck(App.viewYear(), "backup", true);
       UI.toast("Backup exported ✓", "success");
       setTimeout(() => App.rerender(), 400);
     });

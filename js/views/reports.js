@@ -497,8 +497,7 @@ const Reports = (() => {
       H("13. Assumptions used in estimates") +
       `<p style="font-size:12.5px">SE tax ${S.settings.seTaxRatePct}% of 92.35% of net · Federal reserve ${S.settings.federalReservePct}% · State reserve ${S.settings.stateReservePct}% · Mileage ${Store.mileageRateText(year)}. All figures are bookkeeping estimates prepared by the owner, not tax determinations.</p>`);
     // mark checklist item
-    const yc = S.yearChecklists[String(year)] = S.yearChecklists[String(year)] || {};
-    yc.cpaExport = true; Store.save();
+    Store.setYearCheck(year, "cpaExport", true);
   }
 
   /* ---------- IRS audit-readiness packet ---------- */

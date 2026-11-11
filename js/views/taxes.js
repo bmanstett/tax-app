@@ -153,10 +153,7 @@ Views.taxes = {
       if (p) Taxes.editPayment(p);
     }));
     el.querySelectorAll("[data-check]").forEach(cb => cb.addEventListener("change", () => {
-      const y = String(year);
-      Store.state.yearChecklists[y] = Store.state.yearChecklists[y] || {};
-      Store.state.yearChecklists[y][cb.getAttribute("data-check")] = cb.checked;
-      Store.save();
+      Store.setYearCheck(year, cb.getAttribute("data-check"), cb.checked);
       App.rerender();
     }));
     el.querySelectorAll("[data-route]").forEach(x => x.addEventListener("click", () => App.go(x.getAttribute("data-route"), { freshLists: true })));
