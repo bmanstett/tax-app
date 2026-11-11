@@ -50,10 +50,16 @@ const Sync = (() => {
     });
   }
 
-  /** A failed request as an Error. GitHub also answers 403 when it is rate-limiting (a burst
-      of attachment uploads): that is marked, so it is retried instead of read as a bad token. */
-  const ghErr = (res, what) => new Error(`GitHub ${res.status}${
-    (res.status === 403 || res.status === 429) && (res.headers.get("retry-after") || res.headers.get("x-ratelimit-remaining") === "0") ? " rate-limited" : ""} ${what}`);
+  /** A failed request as an Error. GitHub also answers 403 (or 429) when it is rate-limiting —
+      a burst of attachment uploads does it. That is not a bad token: the error carries how
+      long GitHub asked us to stay away (waitMs), and sync waits that out. */
+  const ghErr = (res, what) => {
+    const limited = (res.status === 403 || res.status === 429) &&
+      (res.headers.get("retry-after") || res.headers.get("x-ratelimit-remaining") === "0");
+    const e = new Error(`GitHub ${res.status}${limited ? " rate-limited" : ""} ${what}`);
+    if (limited) e.waitMs = Math.min(Math.max(Number(res.headers.get("retry-after")) || 60, 60), 600) * 1000;
+    return e;
+  };
 
   /** Unicode-safe base64 */
   function b64(str) {
@@ -213,7 +219,7 @@ const Sync = (() => {
     // …and only when the two copies disagree: a year both list was locked again after that
     // entry (earlier builds re-locked every unlock at the next sync, leaving the entry behind —
     // honouring it now would quietly unlock the year on every device).
-    const lists = (s, y) => (s.lockedYears || []).map(Number).includes(y);
+    const lists = (st, y) => (st.lockedYears || []).map(Number).includes(y);
     merged.lockedYears = [...new Set([...(local.lockedYears || []), ...(remote.lockedYears || [])].map(Number))]
       .filter(y => (lists(local, y) && lists(remote, y)) || lastLockChange(y) !== "unlocked").sort();
     // duplicate pairs dismissed as "keep both" — union, so reviewing on one device settles it
@@ -438,7 +444,15 @@ const Sync = (() => {
         return { deferred: true };
       }
       console.warn("Sync failed:", e);
-      const authErr = /^GitHub (401|403)(?! rate-limited)\b/.test(e.message);
+      if (e.waitMs) {
+        // rate-limited: polls and saves wait it out; "Sync now" still runs at once
+        authPausedUntil = Date.now() + e.waitMs;
+        setStatus("error", "GitHub asked sync to slow down — it resumes by itself");
+        scheduleSync(e.waitMs + 1000 + Math.random() * 4000);
+        if (manual) UI.toast("GitHub asked sync to slow down — it will resume by itself in a minute or so", "default", 5000);
+        return { error: e.message };
+      }
+      const authErr = /^GitHub (401|403)\b/.test(e.message);   // (a rate-limited 403 never reaches this line)
       if (authErr) {
         // say so once, then re-check every 10 minutes (and at once on a manual sync or a new
         // token) — not on every 20-second poll, each with its own 7-second red toast
