@@ -207,10 +207,9 @@ const WO = (() => {
     return Store.mileageRateOn(w.inspectionDate || w.dateAssigned || U.todayISO());
   }
 
-  function routeStart() {
-    const s = Store.state.settings;
-    return (s.homeBase && /\d/.test(s.homeBase)) ? s.homeBase : U.addressLine(s.businessAddress || s.homeBase || "");
-  }
+  /** Where trips start: a street address from Settings (Home base, else the business
+      address), or "" — then nothing is routed (see Store.officeAddress). */
+  const routeStart = () => Store.officeAddress();
 
   /** The job's loss location as a single-line address (blank when there isn't one). */
   const lossAddress = w => U.addressLine(w && w.lossLocation);
@@ -222,6 +221,8 @@ const WO = (() => {
     const to = lossAddress(w);
     if (!to) throw new Error("This work order has no loss-location address to route to");
     const oneWay = await U.drivingMiles(from, to);
+    // a bad address lookup must not land on a client's invoice
+    if (oneWay > Store.maxRouteMiles) throw new Error(`the route came out ${U.num(oneWay, 1)} mi each way — check Settings → Home base and the job's address`);
     const miles = U.round2(oneWay * 2);
     const rate = mileageBillRate(w);
     return { oneWay: U.round2(oneWay), miles, rate, amount: U.round2(miles * rate) };
@@ -313,7 +314,7 @@ const WO = (() => {
     const to = lossAddress(w);
     if (!to) return { status: "failed", reason: "no loss-location address on the work order" };
     const from = routeStart();
-    if (!from) return { status: "failed", reason: "no home base set in Settings" };
+    if (!from) return { status: "failed", reason: "no street address in Settings (Home base or Business address)" };
     const date = tripDateFor(w);
     if (Store.isYearLocked(U.yearOf(date))) return { status: "skipped", reason: `tax year ${U.yearOf(date)} is locked` };
 
@@ -330,6 +331,9 @@ const WO = (() => {
       return { status: "skipped", reason: notMileageReason(now) };
 
     const oneWay = U.round2(route.miles);
+    // never logged on its own: a longer trip you really drove can still be added by hand
+    if (oneWay > Store.maxRouteMiles)
+      return { status: "failed", reason: `the route came out ${U.num(oneWay, 1)} mi each way from ${U.truncate(from, 40)} — check Settings → Home base and the job's address` };
     const miles = U.round2(oneWay * 2);
     const billed = !!w.mileageAllowed;   // the client agreed to cover it, and the job is paid
     const trip = Store.add("mileage", {
@@ -536,7 +540,7 @@ const WO = (() => {
           (w.claimNumber ? `, claim ${w.claimNumber}` : "") + (where ? ` (${U.truncate(where, 60)})` : ""),
       },
       onSave: v => {
-        if (!Store.add("expense", v)) return;
+        if (!Store.add("expense", v)) return false;   // refused (locked year): the form stays open
         UI.toast("Travel expense added", "success");
         setTimeout(() => afterTravelChange(w.id, { onDone }), 0);   // once this form has closed
       },
@@ -1048,16 +1052,23 @@ const WO = (() => {
         case "directions": openDirections(w); break;
         case "edit": m.close(); openEditor(w); break;
         case "mileage":
-          UI.openForm("mileage", null, { presets: { ...presets, businessPurpose: `Inspection — ${w.jobType || "site"} (${w.woNumber || ""})`.trim(), destination: (w.lossLocation || "").split("\n")[0], reimbursable: !!w.mileageAllowed },
-            onSave: v => { if (!Store.add("mileage", v)) return; UI.toast("Mileage logged", "success"); App.rerender(); m.close(); openDetail(w); } });
+          // dated to the inspection (the day of the drive), not to today
+          UI.openForm("mileage", null, { presets: { ...presets, ...(w.inspectionDate ? { date: w.inspectionDate } : {}), businessPurpose: `Inspection — ${w.jobType || "site"} (${w.woNumber || ""})`.trim(), destination: (w.lossLocation || "").split("\n")[0], reimbursable: !!w.mileageAllowed },
+            // a refused save keeps the form open with what was typed
+            onSave: v => {
+              const y = U.yearOf(v.date);
+              if (Store.isYearLocked(y)) { UI.toast(`Tax year ${y} is locked — pick the trip's date in an open year, or unlock ${y} on the Taxes page`, "error", 6000); return false; }
+              if (!Store.add("mileage", v)) return false;
+              UI.toast("Mileage logged", "success"); App.rerender(); m.close(); openDetail(w);
+            } });
           break;
         case "expense":
           UI.openForm("expense", null, { presets: { ...presets, businessPurpose: `Job expense — ${w.woNumber || ""}`.trim() },
-            onSave: v => { if (!Store.add("expense", v)) return; UI.toast("Expense added", "success"); App.rerender(); m.close(); openDetail(w); } });
+            onSave: v => { if (!Store.add("expense", v)) return false; UI.toast("Expense added", "success"); App.rerender(); m.close(); openDetail(w); } });
           break;
         case "receipt":
           UI.openForm("receipt", null, { presets: { workOrderId: w.id },
-            onSave: v => { if (!Store.add("receipt", v)) return; UI.toast("Receipt saved", "success"); App.rerender(); m.close(); openDetail(w); } });
+            onSave: v => { if (!Store.add("receipt", v)) return false; UI.toast("Receipt saved", "success"); App.rerender(); m.close(); openDetail(w); } });
           break;
         case "invoice": createInvoiceFrom(w, m); break;
         case "submitted":

@@ -174,6 +174,13 @@ SCHEMA.expenseCategories = [
   { name: "Miscellaneous Business",        scheduleC: "Other Expenses (Line 27a)" },
 ];
 SCHEMA.expenseCategoryNames = SCHEMA.expenseCategories.map(c => c.name);
+
+/* ---------- Home-office utility bills ----------
+   The house's utility bills are the home office's operating cost. They live in the
+   Home Office section, not in expenses: they are indirect costs that the office's
+   share of the house applies to (Form 8829 / CPA), so they never enter the
+   expense totals or the Schedule C organizer. */
+SCHEMA.utilityServices = ["Electric", "Natural Gas", "Water & Sewer", "Internet", "Trash & Recycling", "Other"];
 SCHEMA.scheduleCFor = name => (SCHEMA.expenseCategories.find(c => c.name === name) || {}).scheduleC || "Uncategorized — needs review";
 
 /** Categories that suggest depreciation / Sec. 179 review when large */
@@ -476,6 +483,34 @@ SCHEMA.fields.expense = [
   F("cpaReview", "Flag for CPA review", "checkbox"),
 ];
 
+/* ---------- Home-office utility bill (Home Office page) ---------- */
+SCHEMA.fields.officeBill = [
+  F("_s1", "Utility bill", "section"),
+  F("date", "Bill date", "date", { default: () => U.todayISO(), required: true,
+    hint: "The date on the bill — or on the payment, when there's no copy of the bill" }),
+  F("utility", "Utility", "text", { required: true, placeholder: "e.g. Dominion Energy" }),
+  F("service", "Service", "select", { options: SCHEMA.utilityServices, default: "Electric", required: true, allowEmpty: false }),
+  F("amount", "Amount billed", "money", { required: true }),
+  F("billMonth", "Bill month", "text", { placeholder: "YYYY-MM",
+    hint: "The month this bill is for. Leave blank and it's the bill date's month." }),
+  F("dueDate", "Due date", "date"),
+  F("account", "Account", "text", { placeholder: "ending 1234" }),
+  F("property", "Service address", "text", { span2: true, default: () => ((Store.state.homeOffice || {}).address || "") }),
+  F("paymentNote", "Payment", "text", { span2: true, placeholder: "e.g. Paid Oct 2 by Apple Pay · Auto Pay on Nov 1" }),
+
+  F("_s2", "Bill copy", "section"),
+  F("receiptStatus", "Bill copy", "select", { options: SCHEMA.receiptStatuses.map(s => s.value), default: "Missing" }),
+  F("_file", "Attach the bill (PDF, photo, or email printout)", "file", { span2: true,
+    hint: "Stored in this browser (IndexedDB) and included in JSON backups. Status flips to Attached automatically." }),
+  F("receiptRef", "Bill reference", "text", { placeholder: "filename or folder location" }),
+  F("sourceRef", "Source / document reference", "text"),
+
+  F("_s3", "Notes & Review", "section"),
+  F("notes", "Notes", "textarea", { span2: true }),
+  F("auditNotes", "Audit Notes", "textarea", { span2: true }),
+  F("cpaReview", "Flag for CPA review", "checkbox"),
+];
+
 /* ---------- Mileage trip ---------- */
 SCHEMA.fields.mileage = [
   F("_s1", "Trip", "section"),
@@ -483,11 +518,9 @@ SCHEMA.fields.mileage = [
   F("tripType", "Trip Type", "select", { options: SCHEMA.tripTypes, default: "Inspection" }),
   F("startLocation", "Start Location", "text", { placeholder: "office / home base address",
     hint: "Defaults to your office — set it under Settings → Home base (use a full street address so miles can auto-calculate)",
-    default: () => {
-      const s = Store.state.settings;
-      if (s.homeBase && /\d/.test(s.homeBase)) return s.homeBase; // looks like a real address
-      return (s.businessAddress || s.homeBase || "").replace(/\n/g, ", ");
-    } }),
+    // the office street address (Home base, else the business address), or blank — never the
+    // "Home office" label, which can't be routed
+    default: () => Store.officeAddress() }),
   F("destination", "Destination", "text", { required: false, placeholder: "loss location / client address" }),
   F("businessPurpose", "Business Purpose", "text", { placeholder: "e.g. Roof inspection for claim #…", span2: true }),
   F("clientId", "Client", "client"),
@@ -499,12 +532,20 @@ SCHEMA.fields.mileage = [
     actionBtn: {
       label: "📍 Calculate from addresses",
       async onClick({ values, btn, setValue, hint }) {
-        const from = String(values.startLocation || "").trim();
+        let from = String(values.startLocation || "").trim();
         const to = String(values.destination || "").trim();
+        // your Home base label ("Home office") stands for the office: route from its street address
+        const label = String(Store.state.settings.homeBase || "").trim().toLowerCase();
+        if (from && !/\d/.test(from) && (from.toLowerCase() === label || /^home( office)?$/i.test(from))) {
+          from = Store.officeAddress();
+          if (!from) { UI.toast("Set your office street address in Settings (Home base or Business address), or type the start address", "error", 6000); return; }
+        }
         if (!from || !to) { UI.toast("Fill in Start Location and Destination first", "error"); return; }
         btn.disabled = true; btn.textContent = "Calculating…";
         try {
           const oneWay = await U.drivingMiles(from, to);
+          if (oneWay > Store.maxRouteMiles && !(await UI.confirm("Check the addresses",
+            `That route comes out <strong>${U.num(oneWay, 1)} miles each way</strong>. Use it anyway?`, { confirmLabel: "Use it" }))) return;
           const total = U.round2(values.roundTrip ? oneWay * 2 : oneWay);
           setValue("miles", total);
           hint(`${U.num(oneWay, 1)} mi one-way${values.roundTrip ? " × 2 (round trip)" : ""} = ${U.num(total, 1)} mi — edit the number if you made extra stops`);
@@ -624,6 +665,7 @@ SCHEMA.entities = {
   asset:      { store: "assets",      label: "Asset",       plural: "Assets",       icon: "🛠️", route: "assets" },
   contractor: { store: "contractors", label: "Contractor",  plural: "Contractors",  icon: "👷", route: "contractors" },
   taxPayment: { store: "taxPayments", label: "Tax Payment", plural: "Tax Payments", icon: "🏛️", route: "taxes" },
+  officeBill: { store: "officeBills", label: "Utility Bill", plural: "Utility Bills", icon: "💡", route: "homeoffice" },
 };
 
 /* ---------- The required disclaimer ---------- */

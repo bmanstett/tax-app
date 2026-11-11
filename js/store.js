@@ -57,8 +57,10 @@ const Store = (() => {
       assets: [],
       contractors: [],       // each has payments: []
       taxPayments: [],
+      officeBills: [],        // the house's utility bills — Home Office page, never expenses (see SCHEMA.utilityServices)
       homeOffice: {
         usedRegularlyExclusively: false,
+        address: "",
         officeSqFt: 0, homeSqFt: 0,
         utilities: 0, internet: 0, insurance: 0, repairs: 0,
         mortgageInterestRentNote: "", propertyTaxNote: "",
@@ -146,8 +148,7 @@ const Store = (() => {
       saveListeners.forEach(fn => fn(new Date()));
     } catch (e) {
       console.error("Save failed:", e);
-      // (UI is a top-level const, not a property of window — `window.UI` was always undefined,
-      // so this warning never showed and a full disk failed silently)
+      // UI is a top-level const, not a window property: `window.UI` was always false, so this never showed
       if (typeof UI !== "undefined") UI.toast("⚠️ Save failed — storage may be full. Export a backup now.", "error", 6000);
     }
   }, 150);
@@ -166,17 +167,24 @@ const Store = (() => {
     const y = recordYear(rec);
     return !!(y && isYearLocked(y));
   }
+  /* A refused edit says so:
+     - every time while a form or dialog is open (it is the user's own edit that was refused),
+       a few seconds apart at most;
+     - otherwise once per locked year per session: background writers (Ledger, payment
+       backfill, the tidy-up after a sync) would repeat it on every scan and launch. */
+  const lockToasted = new Set();
   let lockToastAt = 0;
   function lockGuard(rec) {
     const y = recordYear(rec);
     if (!(y && isYearLocked(y))) return false;
-    // Say so only while a form or dialog is open — the user's own edit was just refused.
-    // Background passes reach locked records too (the tidy-up after a sync; Ledger re-linking
-    // a moved job folder on every scan) and must stay quiet, or the toast returns every pass.
-    const dlg = document.getElementById("modal-root");
-    if (typeof UI !== "undefined" && dlg && dlg.children.length && Date.now() - lockToastAt > 4000) {
-      lockToastAt = Date.now();
-      UI.toast(`Tax year ${y} is locked. Unlock it on the Taxes page to edit.`, "error", 5000);
+    if (typeof UI !== "undefined") {
+      const dlg = document.getElementById("modal-root");
+      const inForm = !!(dlg && dlg.children.length);
+      if (inForm ? Date.now() - lockToastAt > 4000 : !lockToasted.has(y)) {
+        lockToasted.add(y);
+        lockToastAt = Date.now();
+        UI.toast(`Tax year ${y} is locked — that change wasn't saved. Unlock it on the Taxes page to edit.`, "error", 5000);
+      }
     }
     return true;
   }
@@ -202,6 +210,7 @@ const Store = (() => {
       case "asset": return rec.name || "(asset)";
       case "contractor": return rec.name || "(contractor)";
       case "taxPayment": return `${rec.taxYear} ${rec.quarter} ${U.money(rec.amount)}`;
+      case "officeBill": return `${rec.utility || "?"} ${U.money(rec.amount)} ${U.fmtDate(rec.date)}`.trim();
       default: return rec.id;
     }
   }
@@ -423,6 +432,56 @@ const Store = (() => {
       taxPaymentsMade: paid, reserveRemaining: U.round2(totalReserve - paid),
       mileageMiles: U.sum(d.mileage, r => r.miles), mileageRate: mileageRate(y), mileageRateText: mileageRateText(y),
     };
+  }
+
+  /* ---------- home-office utility bills ----------
+     The house's bills are the office's operating cost. They stay out of the expense
+     totals above: the office's share of the house applies to them, and the method
+     (simplified or actual, Form 8829) is the CPA's call. */
+
+  /** The month a bill is for: its billMonth when it carries one (a bill logged from its
+      payment confirmation pays the month before), else its bill date's month. */
+  function billMonthOf(b) {
+    return /^\d{4}-\d{2}$/.test(String(b.billMonth || "")) ? b.billMonth : String(b.date || "").slice(0, 7);
+  }
+
+  /** The office's share of the house (office sq ft ÷ home sq ft, %), or 0 when either is missing. */
+  function officePct() {
+    const ho = state.homeOffice || {};
+    return ho.officeSqFt && ho.homeSqFt ? Math.min(Number(ho.officeSqFt) / Number(ho.homeSqFt) * 100, 100) : 0;
+  }
+
+  /** Utility bills logged for a tax year (by bill date): totals by service and by utility, which
+      months each utility's bills cover, and the office's share at the square-footage ratio
+      (an organizer estimate for the CPA, not a deduction). */
+  function officeBillSummary(y) {
+    y = Number(y);
+    const all = state.officeBills || [];
+    const bills = all.filter(b => inYear(b.date, y));
+    const total = U.round2(U.sum(bills, b => b.amount));
+    const group = (keyFn) => {
+      const out = {};
+      for (const b of bills) {
+        const k = keyFn(b);
+        out[k] = out[k] || { key: k, total: 0, count: 0 };
+        out[k].total = U.round2(out[k].total + (Number(b.amount) || 0));
+        out[k].count++;
+      }
+      return Object.values(out);
+    };
+    const byService = group(b => b.service || "Other")
+      .sort((a, b) => SCHEMA.utilityServices.indexOf(a.key) - SCHEMA.utilityServices.indexOf(b.key));
+    const byUtility = group(b => b.utility || "—").map(u => {
+      const sample = bills.find(b => (b.utility || "—") === u.key) || {};
+      // months of year y this utility's bills cover — from every year's bills, since a bill
+      // paid in January can be for December
+      const months = [...new Set(all.filter(b => (b.utility || "—") === u.key).map(billMonthOf)
+        .filter(m => m.startsWith(y + "-")))].sort();
+      return { ...u, service: sample.service || "", months };
+    }).sort((a, b) => b.total - a.total);
+    const pct = officePct();
+    return { year: y, bills, total, count: bills.length, byService, byUtility, pct,
+      officeShare: pct ? U.round2(total * pct / 100) : null };
   }
 
   /* ---------- state sourcing (which state's return the income belongs on) ----------
@@ -706,6 +765,27 @@ const Store = (() => {
       guarantees a fresh local edit is never overwritten by an older remote copy. */
   function markSettingsChanged() { state.settingsUpdatedAt = U.nowISO(); save(); }
 
+  /** True for settings nobody has filled in: every value still the factory default (the
+      theme, the last-backup date and the year-based values aside). A new install looks like
+      this, and sync never lets it replace a real profile (see Sync's merge). */
+  const FACTORY_IGNORED = ["theme", "lastBackupAt", "taxYear", "mileageRates", "mileageRatesH2"];
+  function isFactorySettings(s) {
+    if (!s) return true;
+    const d = defaultSettings();
+    return Object.keys(d).every(k => FACTORY_IGNORED.includes(k) ||
+      JSON.stringify(s[k] === undefined ? d[k] : s[k]) === JSON.stringify(d[k]));
+  }
+
+  /** Where trips are routed from: Settings → Home base when it's a street address, else the
+      business address. "" when neither is one — a label like "Home office" can't be routed
+      (geocoded, it once came out 1,334.8 miles from Alexandria and logged five 2,669.54-mile
+      round trips). */
+  function officeAddress() {
+    const s = state.settings || {};
+    const street = a => (/\d/.test(a || "") ? U.addressLine(a) : "");
+    return street(s.homeBase) || street(s.businessAddress);
+  }
+
   /* ---------- IndexedDB attachments (receipt images/PDFs) ---------- */
   const Attachments = (() => {
     const DB = "anstett_attachments", STORE = "files";
@@ -798,11 +878,16 @@ const Store = (() => {
     invoiceTotal, invoiceBalance, invoiceIsOverdue,
     mileageRate, mileageRateH2, mileageRateOn, mileageRateText, mileageRateCheck, useIrsMileageRates, fmtRate, IRS_MILEAGE,
     tripDeduction, expenseDeductibleAmt,
-    yearData, taxSummary,
+    yearData, taxSummary, billMonthOf, officePct, officeBillSummary,
     incomeWorkOrder, incomeStateSource, incomeStateSplit, stateIncomeSummary,
     findDuplicates, setDuplicateIgnored, statusChangedAt, integrityCheck,
     exportJSON, importJSON, validateImport, resetAll, applySynced,
     isYearLocked, recordLocked, backupDue, markBackedUp, markSettingsChanged,
+    isFactorySettings, officeAddress,
+    /** A route longer than this each way is refused when logged automatically and needs your
+        OK when calculated in a form: the longest real drive so far is about 190 miles, and a
+        bad start address once produced 1,334.8. */
+    maxRouteMiles: 500,
     logAudit, labelFor,
     Attachments,
   };

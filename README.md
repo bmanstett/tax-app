@@ -56,6 +56,9 @@ as an off-device backup with full history (every sync is a git commit).
 - **How conflicts resolve:** merged per record — the newest edit of each work order/expense/etc.
   wins; deletions on one device propagate to the others (tombstones). Nothing is ever
   overwritten wholesale.
+- **Settings:** the device that saved Settings last wins. A new install's blank profile never
+  does: a device turning sync on for the first time takes the synced profile, keeping only the
+  changes made on it since (say, one tax assumption) when they're newer.
 - **Safety rails:** sync refuses to write to a public repo, and the token is stored only on
   the device (never in JSON backups or the synced data). A new or reset device that joins takes
   the repo's business profile rather than overwriting it with blank defaults; turning sync on
@@ -80,11 +83,11 @@ Clear it anytime: **Settings → Clear ALL data**, then start fresh.
 | **Clients** | Rates, terms, W-9/1099 flags, profitability, average payment time, 1099 reconciliation status |
 | **Invoices** | Flat/hourly billing + mileage & expense reimbursements, aging, partial payments, printable invoice, income reconciliation. Marking one paid (or closing its work order) fills the **payment date with that day and the method with ACH / Direct Deposit** unless you set them yourself, and **asks whether the job's travel counts as IRS mileage (the home-office round trip is logged for you) or as expenses** if the job hasn't said yet |
 | **Income** | All money in, 1099 tracking, **state sourcing** (which state's return each dollar belongs on — see below), and the **1099 Reconciliation tool** (compare 1099s received vs. recorded income) |
-| **Expenses** | Schedule C-style categories, business purpose, **receipt upload right on the expense form** (📷 Take photo / 📁 Choose file with preview) plus **one-tap 📎 Attach on every expense row/card** — no need to open the form; attached receipts open in a viewer from the list; business-use %, reimbursable tracking, CPA-review flags |
+| **Expenses** | Schedule C-style categories, business purpose, **receipt upload right on the expense form** (📷 Take photo / 📁 Choose file with preview) plus **one-tap 📎 Attach on every expense row/card** — no need to open the form; attached receipts open in a viewer from the list; business-use %, reimbursable tracking, CPA-review flags; and **expenses the Crew files in `CYxx\Receipts` are logged by Ledger with the receipt attached** (see below) |
 | **Mileage** | Field-optimized **⚡ Quick trip** logging, **automatic round trips on paid jobs you count as IRS mileage** (badged “Auto” — distance routed from your home base to the loss location), odometer support, the IRS rate by trip date (**2026 has two: 72.5¢ through June, 76¢ from July 1**), substantiation score, CSV log export |
 | **Receipts** | Attach photos/PDFs (stored locally in IndexedDB) or reference cloud/paper locations; missing-receipt report |
 | **Assets** | Equipment purchases flagged for depreciation / Section 179 CPA review |
-| **Home Office** | Square footage, simplified/actual-method inputs, CPA notes — organizer only |
+| **Home Office** | Square footage, simplified/actual-method inputs, CPA notes, and the house's **utility bills** (electric, gas, water, internet) with a month-by-month coverage grid and the office's share — organizer only; the bills never enter expenses |
 | **Contractors** | Payments, W-9 status, automatic $600 1099-NEC flagging (payments mirror into expenses) |
 | **Taxes** | Quarterly estimated payment tracker with due dates, configurable reserve percentages, year-end checklist, **year lock** |
 | **Tax Savings** | Every legal way to lower this year's taxable income that fits your books — ranked by what it's worth, each with the authority, the paperwork that makes it hold up, and the line not to cross (see below) |
@@ -145,7 +148,7 @@ are planning numbers from your profile, not a tax calculation — and none of it
 - Scanned or copy-protected PDF? Use the **paste-text fallback** in the same dialog
   (open the PDF, Ctrl+A, Ctrl+C, paste).
 
-## Ledger — work-order inbox (intake agent)
+## Ledger — work-order and expense inbox (intake agent)
 
 **Settings → 📥 Ledger**. Ledger is the Tax App's part of the FCGA agent crew. Choose your `Work Orders` folder once on the desktop,
 in Chrome or Edge. If the browser asks, pick *Allow on every visit*.
@@ -153,7 +156,8 @@ in Chrome or Edge. If the browser asks, pick *Allow on every visit*.
 The intake agent files each FCGA work-order email into `Work Orders\CYxx\P#xxxxx_…\` and
 writes a `job.json` there with this app's work-order field names. Whenever the app opens
 or comes back into focus (and every 5 minutes while it's open), it scans the current and
-previous year's folders, including `Complete`, `Peer Review Pending` and `Working`:
+previous year's folders, including `Complete`, `Peer Review Pending` and `Working`. Only one
+scan runs at a time, even with the app open in two windows, so nothing is logged twice:
 
 - **Matching is by project number (P#) only.** FCGA opens a new P# for every assignment,
   including a supplement or a second or third report on a claim it has worked before, so a
@@ -176,6 +180,82 @@ previous year's folders, including `Complete`, `Peer Review Pending` and `Workin
   Ledger did alongside the other agents.
 - **Scanned already:** nothing happens. Records carry `intakeKey` (the PDF's hash) and
   `jobFolder`.
+
+### Expenses the Crew files
+
+The same scan logs expenses. The Crew saves the receipt into `Work Orders\CYxx\Receipts\`
+(this year's or last year's) and writes a `<anything>.expense.json` beside it:
+
+```json
+{
+  "schema": "ledger-expense/1",
+  "intakeKey": "walmart-order-2000153-80159274",
+  "receipt": "Monitor.pdf",
+  "projectNumber": "",
+  "expense": {
+    "date": "2026-09-20", "vendor": "Walmart.com", "amount": 1566.19,
+    "paymentMethod": "Credit Card", "category": "Computer Equipment",
+    "subcategory": "Dell UltraSharp U4025QW monitor", "businessPurpose": "…",
+    "sourceRef": "AMEX ending 1003 · Walmart order #2000153-80159274", "notes": "…"
+  }
+}
+```
+
+- **Fields:** `expense` uses this app's expense field names — `date` (YYYY-MM-DD), `vendor`,
+  `amount`, `category` (one of the app's categories, exactly) are required; `paymentMethod`,
+  `subcategory`, `businessPurpose`, `sourceRef`, `receiptRef`, `receiptStatus`,
+  `businessUsePct`, `deductible`, `reimbursable`, `reimbursed`, `notes`, `auditNotes` and
+  `cpaReview` are optional, and anything missing gets the expense form's default (deductible,
+  100% business use, receipt *Missing*).
+- **Receipt:** `receipt` names a file in the same folder; it is attached and the receipt
+  status set to *Attached*. If the file isn't there yet, the expense waits for it. Leave
+  `receipt` out when there isn't one, and the expense goes in as *No receipt*.
+- **Job:** `projectNumber` (optional) links the expense to that work order, e.g. parking on
+  an inspection.
+- **Afterwards:** writes `"ledger": { "loggedAt", "expenseId" }` into the file. A stamped
+  file is never read again, and an expense with the same `intakeKey` is never added twice,
+  even if the stamp couldn't be written. The expense carries `intakeKey` and `intakeFile`.
+- **Can't take it:** a file with a missing or unknown field, no `"schema"`, or a date in a
+  locked tax year is reported once in the Ledger toast (and again whenever you tap
+  **Settings → Ledger → Check now**), and left as it is until it's fixed.
+
+### Utility bills the Crew files
+
+The house's utility bills are the home office's operating cost, so they go in the **Home Office**
+section's utility-bill log, never in expenses: they're indirect costs that the office's share of the
+house applies to (Form 8829, the CPA's call), and logging them as expenses would count them twice and
+at 100%. The Crew saves each bill into `Work Orders\CYxx\Receipts\Home Office\` and writes a
+`<anything>.office.json` beside it; the same scan logs it:
+
+```json
+{
+  "schema": "ledger-office-bill/1",
+  "intakeKey": "dominion-bill-2026-10-02",
+  "accountId": "dominion", "kind": "bill", "cycle": "2026-10",
+  "receipt": "2026-10-02 Dominion Energy - electric bill.pdf",
+  "bill": {
+    "date": "2026-10-02", "utility": "Dominion Energy", "service": "Electric", "amount": 247.97,
+    "billMonth": "2026-10", "dueDate": "2026-10-27", "account": "ending 3351",
+    "property": "…", "paymentNote": "Paid Oct 2, 2026: …", "sourceRef": "…", "notes": "…"
+  }
+}
+```
+
+- **Fields:** `bill` uses the utility-bill form's field names. `date` (YYYY-MM-DD), `utility`,
+  `amount` and `service` (one of Electric, Natural Gas, Water & Sewer, Internet, Trash & Recycling,
+  Other) are required; `billMonth` (YYYY-MM, the month the bill is for — a bill logged from its
+  payment confirmation pays the month before), `dueDate`, `account`, `property`, `paymentNote`,
+  `sourceRef`, `receiptRef`, `receiptStatus`, `notes`, `auditNotes` and `cpaReview` are optional.
+  `accountId`, `kind` and `cycle` are the Crew's own bookkeeping and are ignored here.
+- **Bill copy, afterwards, can't take it:** exactly as for expenses — `receipt` is attached (the
+  bill waits until it's there), the file is stamped `"ledger": { "loggedAt", "billId" }`, a bill
+  with the same `intakeKey` is never added twice, and a file with a missing or unknown field is
+  reported in the Ledger toast and left alone.
+
+The Home Office page shows the year's bills by service, which months each utility's bills cover (a
+red dash is a month with no bill yet), and the office's share at the office-to-home square footage.
+Add a bill that didn't come through the Crew with **＋ Add Utility Bill**. The Home office summary
+report and the CPA packet list them.
 
 Your phone gets the records through normal sync. The inbox only runs on the computer that
 holds the folder.
@@ -252,7 +332,13 @@ arrived aren't sprung on you all at once — they wait on the dashboard list.
 
 Routing details:
 
-- Set **Settings → Home base** to a full street address — that's where every trip starts.
+- Every trip starts at **Settings → Home base** when it's a full street address, otherwise at
+  your **Business address**. With neither, nothing is auto-logged — a label like "Home office"
+  can't be routed (it once geocoded to a spot 1,334.8 miles away). An auto-logged route over 500
+  miles each way is refused rather than logged; check the addresses (Settings → Data health
+  lists the jobs), or add a trip that long by hand if you really drove it. **📍 Calculate** in a
+  trip form asks before using a route that long; on an invoice it's refused (type the amount).
+- **🚗 Add mileage** on a job dates the trip to its inspection; the form still lets you change it.
 - Distances come from free OpenStreetMap services (Nominatim + OSRM, no API key, one lookup a
   second). When a street number isn't on the map it falls back to the street, then the town, and
   says so in the trip notes — check those.

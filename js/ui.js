@@ -323,7 +323,8 @@ const UI = (() => {
       delete out._file;
 
       // attach file if present (receipts)
-      let replacedAtt = "";
+      let replacedAtt = "", storedAtt = "";
+      const saveLabel = saveBtn.textContent;
       if (pendingFile) {
         saving = true; saveBtn.disabled = true; saveBtn.textContent = "Saving…";
         try {
@@ -333,13 +334,20 @@ const UI = (() => {
           const attId = U.uid("att");
           replacedAtt = (record && record.attachmentId) || "";
           await Store.Attachments.put({ id: attId, name: pendingFile.name, type: pendingFile.type, dataUrl });
+          storedAtt = attId;
           out.attachmentId = attId;
           out.attachmentName = pendingFile.name;
           if (out.status === "Missing" || out.status === "Referenced") out.status = "Attached";
           if (out.receiptStatus === "Missing" || out.receiptStatus === "Referenced") out.receiptStatus = "Attached";
         } catch (e) { toast("Couldn't store the file: " + e.message, "error", 5000); }
       }
-      opts.onSave && opts.onSave(out, m);
+      // an onSave that returns false couldn't save (it says why): the form stays open with what was typed
+      if (opts.onSave && opts.onSave(out, m) === false) {
+        // the photo was stored for a save that didn't happen — the next try stores it again
+        if (storedAtt) Store.Attachments.delete(storedAtt).catch(() => {});
+        saving = false; saveBtn.disabled = false; saveBtn.textContent = saveLabel;
+        return;
+      }
       m.close();
       // the file this one replaced is no longer pointed at — dropped only once the save really took
       if (replacedAtt && record && SCHEMA.entities[entityType]) {
