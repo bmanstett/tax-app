@@ -121,7 +121,8 @@ const Invoices = (() => {
           if (!vals.paymentMethod) vals.paymentMethod = DEFAULT_PAYMENT_METHOD;
         }
         const saved = rec ? Store.update("invoice", rec.id, vals) : Store.add("invoice", vals);
-        if (saved) { syncWorkOrder(saved); syncIncomeDates(saved); autoLogWorkOrderMileage(saved); }
+        if (!saved) return false;   // refused (a locked tax year — the notice says so): the form stays open with what was typed
+        syncWorkOrder(saved); syncIncomeDates(saved); autoLogWorkOrderMileage(saved);
         // reconcile: if just marked paid, offer to log income (incl. any bonus)
         if (saved && saved.status === "Paid" && paid > 0) {
           const already = Store.state.income.some(i => i.invoiceId === saved.id && i.category !== BONUS_CATEGORY);
@@ -133,7 +134,7 @@ const Invoices = (() => {
         UI.toast(rec ? "Invoice updated" : "Invoice added", "success");
         App.rerender();
       },
-      deleteFn: r => { Store.remove("invoice", r.id); UI.toast("Invoice deleted"); App.rerender(); },
+      deleteFn: r => { if (Store.remove("invoice", r.id)) UI.toast("Invoice deleted"); App.rerender(); },
     });
   }
 
@@ -226,8 +227,16 @@ const Invoices = (() => {
       patch.paymentMethod = inv.paymentMethod || DEFAULT_PAYMENT_METHOD;
     }
     const saved = Store.update("invoice", inv.id, patch);
-    if (saved) { syncWorkOrder(saved); syncIncomeDates(saved); autoLogWorkOrderMileage(saved); }
-    if (status === "Paid" && saved) {
+    if (!saved) {
+      // refused: say so — this used to announce "Marked paid" over an invoice that hadn't changed
+      UI.toast(Store.get("invoice", inv.id)
+        ? `${inv.invoiceNumber || "This invoice"} wasn't changed — its tax year is locked (unlock it on the Taxes page)`
+        : `${inv.invoiceNumber || "This invoice"} no longer exists — it was deleted on another device`, "error", 5500);
+      App.rerender();
+      return;
+    }
+    syncWorkOrder(saved); syncIncomeDates(saved); autoLogWorkOrderMileage(saved);
+    if (status === "Paid") {
       // same test as the form: a bonus entry on its own doesn't mean the payment was logged
       if (!Store.linkedTo("income", "invoiceId", inv.id).some(i => i.category !== BONUS_CATEGORY)) offerIncome(saved);
       else offerBonusIncome(saved);

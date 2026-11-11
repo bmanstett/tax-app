@@ -169,7 +169,7 @@ const U = {
     const body = rows.map(r => cols.map(c => esc(typeof c.value === "function" ? c.value(r) : r[c.key])).join(",")).join("\n");
     // a byte-order mark first: without it Excel on Windows reads the file as ANSI and every
     // dash and accent comes out garbled
-    return "﻿" + head + "\n" + body;
+    return "\uFEFF" + head + "\n" + body;
   },
 
   sum(arr, fn = x => x) { return arr.reduce((t, x) => t + (Number(fn(x)) || 0), 0); },

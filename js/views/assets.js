@@ -14,11 +14,11 @@ const Assets = (() => {
     UI.openForm("asset", rec, {
       presets,
       onSave: vals => {
-        if (rec) Store.update("asset", rec.id, vals); else Store.add("asset", vals);
+        if (!(rec ? Store.update("asset", rec.id, vals) : Store.add("asset", vals))) return false;   // refused (a locked tax year — the notice says so): the form stays open with what was typed
         UI.toast(rec ? "Asset updated" : "Asset added", "success");
         App.rerender();
       },
-      deleteFn: r => { Store.remove("asset", r.id); UI.toast("Asset deleted"); App.rerender(); },
+      deleteFn: r => { if (Store.remove("asset", r.id)) UI.toast("Asset deleted"); App.rerender(); },
     });
   }
   return { openEditor };
@@ -97,13 +97,14 @@ const OfficeBills = (() => {
           vals.billMonth = "";
           UI.toast("Bill month should look like 2026-09 — left blank, so the bill date's month counts", "default", 5000);
         }
-        if (rec) Store.update("officeBill", rec.id, vals); else Store.add("officeBill", vals);
+        if (!(rec ? Store.update("officeBill", rec.id, vals) : Store.add("officeBill", vals))) return false;   // refused (a locked tax year — the notice says so): the form stays open with what was typed
         UI.toast(rec ? "Utility bill updated" : "Utility bill added", "success");
         App.rerender();
       },
       deleteFn: async r => {
+        // the record first: a locked year refuses, and then the bill's copy must stay
+        if (!Store.remove("officeBill", r.id)) { App.rerender(); return; }
         if (r.attachmentId) await Store.Attachments.delete(r.attachmentId).catch(() => {});
-        Store.remove("officeBill", r.id);
         UI.toast("Utility bill deleted");
         App.rerender();
       },

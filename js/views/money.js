@@ -40,12 +40,12 @@ const Income = (() => {
     UI.openForm("income", rec, {
       presets,
       onSave: vals => {
-        if (rec) Store.update("income", rec.id, vals); else Store.add("income", vals);
+        if (!(rec ? Store.update("income", rec.id, vals) : Store.add("income", vals))) return false;   // refused (a locked tax year — the notice says so): the form stays open with what was typed
         UI.toast(rec ? "Income updated" : "Income added", "success");
         reconcileInvoice(vals.invoiceId, vals);
         App.rerender();
       },
-      deleteFn: r => { Store.remove("income", r.id); UI.toast("Income deleted"); App.rerender(); },
+      deleteFn: r => { if (Store.remove("income", r.id)) UI.toast("Income deleted"); App.rerender(); },
     });
   }
 
@@ -213,7 +213,7 @@ const Expenses = (() => {
     UI.openForm("expense", rec, {
       presets,
       onSave: vals => {
-        if (rec) Store.update("expense", rec.id, vals); else Store.add("expense", vals);
+        if (!(rec ? Store.update("expense", rec.id, vals) : Store.add("expense", vals))) return false;   // refused (a locked tax year — the notice says so): the form stays open with what was typed
         UI.toast(rec ? "Expense updated" : "Expense added", "success");
         App.rerender();
       },
@@ -391,7 +391,7 @@ const Receipts = (() => {
     UI.openForm("receipt", rec, {
       presets,
       onSave: vals => {
-        if (rec) Store.update("receipt", rec.id, vals); else Store.add("receipt", vals);
+        if (!(rec ? Store.update("receipt", rec.id, vals) : Store.add("receipt", vals))) return false;   // refused (a locked tax year — the notice says so): the form stays open with what was typed
         UI.toast(rec ? "Receipt updated" : "Receipt saved", "success");
         App.rerender();
       },

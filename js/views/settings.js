@@ -21,11 +21,16 @@ Views.settings = {
     const rateInp = "width:92px;padding:8px;border:1px solid var(--border-strong);border-radius:8px;background:var(--bg-elev);color:var(--text)";
     const rateRowHtml = (y, r1, r2) => {
       const irs = Store.IRS_MILEAGE[y];
+      // placeholders are what a blank box really means: the first falls back to the published
+      // rate (or the latest known one); the published July 1 rate follows only while the first
+      // box is blank or holds the published figure — any other rate there runs all year
+      const ph1 = irs ? irs[0] : Store.mileageRate(y);
+      const ph2 = irs && irs[1] && (!(Number(r1) > 0) || Math.abs(Number(r1) - irs[0]) < 0.0005) ? irs[1] : "—";
       return `<div style="display:flex;gap:8px;align-items:center;margin-bottom:7px;flex-wrap:wrap" data-rate-row="${y}">
         <span style="width:44px;font-weight:700">${y}</span>
-        <input type="number" step="0.005" min="0" data-rate-year="${y}" value="${r1 ?? ""}" placeholder="${irs ? irs[0] : "0.70"}" style="${rateInp}" title="Rate for the year (or January–June)">
+        <input type="number" step="0.005" min="0" data-rate-year="${y}" value="${r1 ?? ""}" placeholder="${ph1}" style="${rateInp}" title="Rate for the year (or January–June)">
         <span style="font-size:12px;color:var(--text-3)">$/mi</span>
-        <input type="number" step="0.005" min="0" data-rate-year-h2="${y}" value="${r2 ?? ""}" placeholder="${irs && irs[1] ? irs[1] : "—"}" style="${rateInp}" title="Rate from July 1 — only when the IRS changed it mid-year">
+        <input type="number" step="0.005" min="0" data-rate-year-h2="${y}" value="${r2 ?? ""}" placeholder="${ph2}" style="${rateInp}" title="Rate from July 1 — only when the IRS changed it mid-year">
         <span style="font-size:12px;color:var(--text-3)">from Jul 1</span>
         ${irs ? `<span style="font-size:11.5px;color:var(--text-3)">IRS: ${irs.map(Store.fmtRate).join(" → ")}</span>` : ""}
       </div>`;
@@ -109,7 +114,7 @@ Views.settings = {
             </div>
             <button class="btn btn-sm" id="st-add-rate" style="margin-bottom:10px">＋ Add year</button>
             <button class="btn btn-sm" id="st-irs-rates" style="margin-bottom:10px">Use the IRS rates</button>
-            <div class="hint" style="font-size:11.5px;color:var(--text-3);margin-bottom:10px">Leave a year blank to use the published IRS rate. The second box is only for a year the IRS changed the rate mid-year (2026: 72.5¢ through June, 76¢ from July 1) — trips are priced by their date. Check irs.gov each January and confirm with your CPA.</div>
+            <div class="hint" style="font-size:11.5px;color:var(--text-3);margin-bottom:10px">Leave a year blank to use the published IRS rate. The second box is only for a year the IRS changed the rate mid-year (2026: 72.5¢ through June, 76¢ from July 1) — trips are priced by their date. A rate of your own in the first box, with the second left blank, applies all year. Check irs.gov each January and confirm with your CPA.</div>
             <button class="btn btn-primary" id="st-save-tax">Save tax assumptions</button>
           </div>
         </div>

@@ -10,13 +10,13 @@ const Taxes = (() => {
   function addPayment(presets) {
     UI.openForm("taxPayment", null, {
       presets: { taxYear: App.viewYear(), ...presets },
-      onSave: vals => { Store.add("taxPayment", vals); UI.toast("Tax payment logged", "success"); App.rerender(); },
+      onSave: vals => { if (!Store.add("taxPayment", vals)) return false; UI.toast("Tax payment logged", "success"); App.rerender(); },
     });
   }
   function editPayment(rec) {
     UI.openForm("taxPayment", rec, {
-      onSave: vals => { Store.update("taxPayment", rec.id, vals); UI.toast("Payment updated", "success"); App.rerender(); },
-      deleteFn: r => { Store.remove("taxPayment", r.id); UI.toast("Payment deleted"); App.rerender(); },
+      onSave: vals => { if (!Store.update("taxPayment", rec.id, vals)) return false; UI.toast("Payment updated", "success"); App.rerender(); },
+      deleteFn: r => { if (Store.remove("taxPayment", r.id)) UI.toast("Payment deleted"); App.rerender(); },
     });
   }
   return { addPayment, editPayment };

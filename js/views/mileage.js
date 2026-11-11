@@ -15,11 +15,11 @@ const Mileage = (() => {
         if ((!vals.miles || Number(vals.miles) === 0) && vals.odometerStart && vals.odometerEnd) {
           vals.miles = U.round2(Number(vals.odometerEnd) - Number(vals.odometerStart));
         }
-        if (rec) Store.update("mileage", rec.id, vals); else Store.add("mileage", vals);
+        if (!(rec ? Store.update("mileage", rec.id, vals) : Store.add("mileage", vals))) return false;   // refused (a locked tax year — the notice says so): the form stays open with what was typed
         UI.toast(rec ? "Trip updated" : `Trip logged — ${U.num(vals.miles, 1)} mi`, "success");
         App.rerender();
       },
-      deleteFn: r => { Store.remove("mileage", r.id); UI.toast("Trip deleted"); App.rerender(); },
+      deleteFn: r => { if (Store.remove("mileage", r.id)) UI.toast("Trip deleted"); App.rerender(); },
     });
   }
 
